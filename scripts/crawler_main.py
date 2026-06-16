@@ -318,54 +318,84 @@ def dedupe(items: Iterable[Drama]) -> list[Drama]:
 # ---------------------------------------------------------------------------
 # 写入 Supabase
 # ---------------------------------------------------------------------------
+def _clean_payload(item: dict) -> dict:
+    """移除 None 值，避免 PGRST125 错误"""
+    return {k: v for k, v in item.items() if v is not None}
+
+
+def _verify_table(client, table_name: str) -> bool:
+    """验证表是否存在且可访问"""
+    try:
+        client.table(table_name).select("id" if table_name != "drama_cv_roles" else "drama_id").limit(1).execute()
+        return True
+    except Exception as e:
+        log.error("表 '%s' 验证失败: %s", table_name, e)
+        return False
+
+
 def upsert_dramas(client, dramas: list[Drama]) -> None:
     if not dramas:
         return
     payload = [
-        {
+        _clean_payload({
             "id": d.id,
             "title": d.title,
-            "original_work": d.original_work,
-            "platform": d.platform,
+            "original_work": d.original_work or None,
+            "platform": d.platform or None,
             "year": d.year or None,
             "total_episodes": d.total_episodes or None,
             "play_count": d.play_count,
             "rating_avg": d.rating_avg,
             "rating_count": d.rating_count,
-            "description": d.description,
-            "studio": d.studio,
-            "director": d.director,
-            "source_url": d.source_url,
+            "description": d.description or None,
+            "studio": d.studio or None,
+            "director": d.director or None,
+            "source_url": d.source_url or None,
             "tags": d.tags if d.tags else None,
-        }
+        })
         for d in dramas
     ]
-    log.info("upserting %d dramas", len(payload))
-    client.table("dramas").upsert(payload).execute()
+    log.info("upserting %d dramas (sample: %s)", len(payload), payload[0] if payload else "empty")
+    try:
+        result = client.table("dramas").upsert(payload).execute()
+        log.info("dramas upsert OK, count=%d", len(result.data) if result.data else 0)
+    except Exception as e:
+        log.error("dramas upsert FAILED: %s", e)
+        raise
 
 
 def upsert_cvs(client, cvs: list[Cv]) -> None:
     if not cvs:
         return
-    payload = [{"id": c.id, "name": c.name, "bio": c.bio} for c in cvs]
+    payload = [_clean_payload({"id": c.id, "name": c.name, "bio": c.bio or None}) for c in cvs]
     log.info("upserting %d cvs", len(payload))
-    client.table("cvs").upsert(payload).execute()
+    try:
+        result = client.table("cvs").upsert(payload).execute()
+        log.info("cvs upsert OK, count=%d", len(result.data) if result.data else 0)
+    except Exception as e:
+        log.error("cvs upsert FAILED: %s", e)
+        raise
 
 
 def upsert_roles(client, roles: list[Role]) -> None:
     if not roles:
         return
     payload = [
-        {
+        _clean_payload({
             "drama_id": r.drama_id,
             "cv_id": r.cv_id,
             "role_type": r.role_type,
-            "character_name": r.character_name,
-        }
+            "character_name": r.character_name or None,
+        })
         for r in roles
     ]
     log.info("upserting %d roles", len(payload))
-    client.table("drama_cv_roles").upsert(payload).execute()
+    try:
+        result = client.table("drama_cv_roles").upsert(payload).execute()
+        log.info("roles upsert OK, count=%d", len(result.data) if result.data else 0)
+    except Exception as e:
+        log.error("roles upsert FAILED: %s", e)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +484,15 @@ def main() -> int:
         return 1
 
     client = create_client(url, service_key)
+
+    # 验证表是否存在
+    log.info("验证 Supabase 表...")
+    for table in ["dramas", "cvs", "drama_cv_roles"]:
+        if not _verify_table(client, table):
+            log.error("表 '%s' 不存在或不可访问。请先在 Supabase SQL Editor 中执行 schema.sql", table)
+            return 1
+    log.info("所有表验证通过")
+
     upsert_dramas(client, all_dramas)
     upsert_cvs(client, all_cvs)
     upsert_roles(client, all_roles)
