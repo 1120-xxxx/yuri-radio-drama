@@ -1,0 +1,28 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import DramaList from '../../islands/DramaList.vue';
+import { getAllDramas } from '../../lib/data';
+
+const all = await getAllDramas();
+const summaries = all.map((d) => ({
+  id: d.id,
+  title: d.title,
+  platform: d.platform,
+  year: d.year,
+  play_count: d.play_count,
+  rating_avg: d.rating_avg,
+  rating_count: d.rating_count,
+  tags: d.tags,
+}));
+---
+
+<BaseLayout title="剧集库 · 百合广播剧数据站">
+  <header class="mb-8">
+    <h1 class="text-3xl md:text-4xl font-bold mb-2">
+      <span class="bg-gradient-to-r from-brand-300 via-accent-300 to-cyanx-400 bg-clip-text text-transparent">剧集库</span>
+    </h1>
+    <p class="text-text-muted">共收录 <span class="text-text-soft font-semibold">{all.length}</span> 部作品，支持关键词搜索与多条件筛选。</p>
+  </header>
+
+  <DramaList client:load dramas={summaries} />
+</BaseLayout>

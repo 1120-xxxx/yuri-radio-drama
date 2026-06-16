@@ -1,0 +1,27 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import RankSwitcher from '../islands/RankSwitcher.vue';
+import { getRankings } from '../lib/data';
+
+const byPlay = await getRankings('play_count');
+const byRating = await getRankings('rating_avg');
+const byCount = await getRankings('rating_count');
+const byCv = await getRankings('cv_roles');
+---
+
+<BaseLayout title="排行榜 · 百合广播剧数据站">
+  <header class="mb-8">
+    <h1 class="text-3xl md:text-4xl font-bold mb-2">
+      <span class="bg-gradient-to-r from-brand-300 via-accent-300 to-cyanx-400 bg-clip-text text-transparent">排行榜</span>
+    </h1>
+    <p class="text-text-muted">多维度榜单，点击 Tab 切换。</p>
+  </header>
+
+  <RankSwitcher
+    client:load
+    :byPlay={byPlay}
+    :byRating={byRating}
+    :byCount={byCount}
+    :byCv={byCv}
+  />
+</BaseLayout>

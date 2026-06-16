@@ -1,0 +1,57 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Stat from '../components/Stat.astro';
+import PlatformPieChart from '../islands/PlatformPieChart.vue';
+import YearBarChart from '../islands/YearBarChart.vue';
+import TopNBarChart from '../islands/TopNBarChart.vue';
+import { getStatsOverview, getRankings } from '../lib/data';
+
+const stats = await getStatsOverview();
+const topPlay = (await getRankings('play_count')).slice(0, 10);
+const topRating = (await getRankings('rating_avg')).slice(0, 10);
+const topCv = (await getRankings('cv_roles')).slice(0, 10);
+---
+
+<BaseLayout title="首页 · 百合广播剧数据站">
+  <section class="mb-10">
+    <div class="mb-8">
+      <h1 class="text-3xl md:text-4xl font-bold mb-3">
+        <span class="bg-gradient-to-r from-brand-300 via-accent-300 to-cyanx-400 bg-clip-text text-transparent">百合广播剧</span>
+      </h1>
+      <p class="text-text-muted max-w-2xl leading-relaxed">聚合各平台百合广播剧元数据、CV 信息与榜单，支持游客匿名评分评论，数据每周自动更新。</p>
+    </div>
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+      <Stat label="剧集数量" value={stats.dramaCount} hint="已收录的剧集" color="brand" />
+      <Stat label="CV 数量" value={stats.cvCount} hint="配音演员" color="accent" />
+      <Stat label="评分总数" value={stats.ratingCount.toLocaleString()} hint="匿名评分累计" color="gold" />
+      <Stat label="平台数量" value={stats.platformCount} hint="聚合的发布平台" color="cyan" />
+    </div>
+  </section>
+
+  <section class="grid gap-4 md:grid-cols-2 mb-10">
+    <div class="card">
+      <h2 class="section-title">平台分布</h2>
+      <PlatformPieChart client:visible data={stats.platformBreakdown} />
+    </div>
+    <div class="card">
+      <h2 class="section-title">年份分布</h2>
+      <YearBarChart client:visible data={stats.yearBreakdown} />
+    </div>
+  </section>
+
+  <section class="grid gap-4 md:grid-cols-2 mb-10">
+    <div class="card">
+      <h2 class="section-title">播放量 Top 10</h2>
+      <TopNBarChart client:visible items={topPlay} height={360} />
+    </div>
+    <div class="card">
+      <h2 class="section-title">评分 Top 10</h2>
+      <TopNBarChart client:visible items={topRating} height={360} variant="accent" />
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 class="section-title">CV 参演数 Top 10</h2>
+    <TopNBarChart client:visible items={topCv} height={360} variant="cyan" linkPrefix="/cvs/" />
+  </section>
+</BaseLayout>
