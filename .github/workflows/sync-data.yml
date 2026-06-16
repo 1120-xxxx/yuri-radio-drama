@@ -34,7 +34,30 @@ jobs:
             echo "Go to: Settings → Secrets and variables → Actions → New repository secret"
             exit 1
           fi
-          echo "Supabase URL: ${SUPABASE_URL:0:30}..."
+          echo "Supabase URL: ${SUPABASE_URL:0:40}..."
+          echo "Service key prefix: ${SUPABASE_SERVICE_ROLE_KEY:0:10}..."
+
+      - name: Test Supabase REST API connection
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "Testing Supabase REST API..."
+          HTTP_CODE=$(curl -s -o /tmp/sb_test.json -w "%{http_code}" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            "${SUPABASE_URL}/rest/v1/dramas?select=id&limit=1")
+          echo "HTTP status: $HTTP_CODE"
+          echo "Response: $(cat /tmp/sb_test.json | head -c 500)"
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::Supabase REST API returned HTTP $HTTP_CODE"
+            echo "Possible causes:"
+            echo "  1. SUPABASE_URL is incorrect (should be like https://xxxx.supabase.co)"
+            echo "  2. SUPABASE_SERVICE_ROLE_KEY is incorrect or is the anon key"
+            echo "  3. Tables not created yet (run schema.sql in Supabase SQL Editor)"
+            exit 1
+          fi
+          echo "Connection OK!"
 
       - name: Dry run (verify data)
         run: python scripts/crawler_main.py --dry-run --skip-crawl
@@ -43,8 +66,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
-        run: python scripts/crawler_main.py --skip-crawl
+        run: python scripts/crawler_main.py --skip-crawl --verbose
 
       - name: Trigger Vercel deploy
         env:

@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ALIASES_FILE = ROOT / "scripts" / "aliases.json"
 
 REQUEST_DELAY = 1.5  # 爬取请求间隔（秒）
+_verbose = False  # 全局 verbose 标志
 
 
 # ---------------------------------------------------------------------------
@@ -62,9 +63,26 @@ class SupabaseREST:
         """Upsert 数据，返回写入的记录"""
         if not data:
             return []
-        resp = requests.post(self._url(table), headers=self.headers, json=data, timeout=30)
+        log.info("POST %s (%d records)", self._url(table), len(data))
+        if _verbose:
+            log.info("Payload sample: %s", json.dumps(data[0], ensure_ascii=False)[:300])
+        try:
+            resp = requests.post(self._url(table), headers=self.headers, json=data, timeout=30)
+        except requests.exceptions.RequestException as e:
+            log.error("Supabase 请求异常 [%s]: %s", table, e)
+            raise
+        log.info("Response: status=%d, body_len=%d", resp.status_code, len(resp.text))
         if resp.status_code >= 400:
             log.error("Supabase upsert 失败 [%s]: status=%d body=%s", table, resp.status_code, resp.text[:500])
+            # 提供更具体的错误提示
+            if resp.status_code == 404:
+                log.error("→ 表 '%s' 不存在，请先在 Supabase SQL Editor 中执行 schema.sql", table)
+            elif resp.status_code == 401:
+                log.error("→ 认证失败，请检查 SUPABASE_SERVICE_ROLE_KEY 是否正确（不是 anon key）")
+            elif resp.status_code == 403:
+                log.error("→ 权限不足，请确认使用的是 service_role key 而非 anon key")
+            elif resp.status_code == 409:
+                log.error("→ 主键冲突，upsert 应该能处理此情况，请检查 Prefer header 是否生效")
             resp.raise_for_status()
         return resp.json() if resp.text.strip() else []
 
@@ -380,7 +398,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="百合广播剧数据流水线")
     parser.add_argument("--dry-run", action="store_true", help="只打印不写入")
     parser.add_argument("--skip-crawl", action="store_true", help="跳过在线爬取，仅使用手动数据")
+    parser.add_argument("--verbose", "-v", action="store_true", help="详细输出")
     args = parser.parse_args()
+
+    global _verbose
+    _verbose = args.verbose
+    if _verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     url = os.environ.get("SUPABASE_URL", "").strip()
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
@@ -422,6 +446,12 @@ def main() -> int:
         return 1
 
     log.info("Supabase URL: %s", url)
+    log.info("Service key prefix: %s...", service_key[:10] if service_key else "(empty)")
+
+    # 验证 URL 格式
+    if not url.startswith("https://"):
+        log.error("SUPABASE_URL 格式错误，应以 https:// 开头，当前值: %s", url[:50])
+        return 1
 
     # 创建 REST 客户端
     client = SupabaseREST(url, service_key)
