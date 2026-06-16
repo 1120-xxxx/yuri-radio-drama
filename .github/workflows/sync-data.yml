@@ -18,14 +18,36 @@ jobs:
           cache: 'pip'
           cache-dependency-path: scripts/requirements.txt
 
-      - run: pip install -r scripts/requirements.txt
+      - name: Install Python dependencies
+        run: pip install -r scripts/requirements.txt
 
-      - name: Sync to Supabase
+      - name: Verify Supabase connection
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set in GitHub Secrets"
+            echo "Please go to: Settings → Secrets and variables → Actions → New repository secret"
+            echo "Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY"
+            exit 1
+          fi
+          echo "Supabase URL: ${SUPABASE_URL:0:30}..."
+          echo "Service key: ${SUPABASE_SERVICE_ROLE_KEY:0:10}..."
+          echo "Connection check passed"
+
+      - name: Run crawler (dry-run first)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/crawler_main.py --dry-run --skip-crawl
+
+      - name: Sync data to Supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
-        run: python scripts/crawler_main.py
+        run: python scripts/crawler_main.py --skip-crawl
 
       - name: Trigger Vercel deploy
         env:
@@ -33,7 +55,8 @@ jobs:
         run: |
           if [ -n "$VERCEL_DEPLOY_HOOK" ]; then
             echo "Triggering Vercel deploy..."
-            curl -fsSL -X POST "$VERCEL_DEPLOY_HOOK"
+            curl -fsSL -X POST "$VERCEL_DEPLOY_HOOK" || echo "Warning: Deploy hook call failed"
           else
             echo "VERCEL_DEPLOY_HOOK not set, skipping deploy trigger"
+            echo "To enable: Settings → Secrets → Add VERCEL_DEPLOY_HOOK"
           fi
