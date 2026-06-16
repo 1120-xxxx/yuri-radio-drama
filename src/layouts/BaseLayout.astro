@@ -23,8 +23,6 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
     <meta name="theme-color" content="#1a1a2e" />
     <title>{title}</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <!-- Vercel Analytics -->
-    <script is:inline src="/_vercel/insights/script.js" defer></script>
   </head>
   <body>
     <header class="sticky top-0 z-20 backdrop-blur-xl bg-bg/80 border-b border-border-soft">
@@ -104,6 +102,10 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         const el = document.getElementById('mobile-nav');
         if (el) el.classList.toggle('hidden');
       });
+    </script>
+    <script>
+      import { inject } from '@vercel/analytics';
+      inject();
     </script>
   </body>
 </html>
