@@ -2,36 +2,25 @@
 #
 # 架构说明：
 #   1. 基于 Python 编写定向爬虫，通过 GitHub Actions 每周定时运行
-#   2. 爬虫完成数据清洗、去重、别名映射后，通过 Supabase Python SDK 写入数据库
+#   2. 使用 Supabase REST API 直接写入数据（不依赖 supabase-py SDK）
 #   3. 数据更新完成后，调用 Vercel Deploy Hook 触发 Astro 全站重新构建
 #   4. 构建完成后静态页自动上线，全程无人工干预
-#   5. 评分、评论为实时动态数据，用户提交后直接入库，前端即时刷新，无需触发全站重建
 #
 # 请勿以任何形式存储和传播受版权保护的音视频内容；仅抓取元数据。
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import os
-import re
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-try:
-    import requests
-except ImportError:
-    requests = None  # type: ignore
-
-try:
-    from supabase import create_client  # type: ignore
-except ImportError:
-    create_client = None  # type: ignore
+import requests
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
 log = logging.getLogger("pipeline")
@@ -39,7 +28,57 @@ log = logging.getLogger("pipeline")
 ROOT = Path(__file__).resolve().parent.parent
 ALIASES_FILE = ROOT / "scripts" / "aliases.json"
 
-REQUEST_DELAY = 1.5  # 请求间隔（秒），避免被封
+REQUEST_DELAY = 1.5  # 爬取请求间隔（秒）
+
+
+# ---------------------------------------------------------------------------
+# Supabase REST API 客户端（直接用 requests，绕开 SDK 兼容性问题）
+# ---------------------------------------------------------------------------
+class SupabaseREST:
+    """轻量 Supabase REST API 封装，不依赖 supabase-py"""
+
+    def __init__(self, url: str, service_key: str):
+        # 确保 URL 不以 / 结尾
+        self.base_url = url.rstrip("/")
+        self.headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation,resolution=merge-duplicates",
+        }
+
+    def _url(self, table: str) -> str:
+        return f"{self.base_url}/rest/v1/{table}"
+
+    def select(self, table: str, columns: str = "*", limit: int | None = None) -> list[dict]:
+        params = {"select": columns}
+        if limit:
+            params["limit"] = str(limit)
+        resp = requests.get(self._url(table), headers=self.headers, params=params, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
+    def upsert(self, table: str, data: list[dict]) -> list[dict]:
+        """Upsert 数据，返回写入的记录"""
+        if not data:
+            return []
+        resp = requests.post(self._url(table), headers=self.headers, json=data, timeout=30)
+        if resp.status_code >= 400:
+            log.error("Supabase upsert 失败 [%s]: status=%d body=%s", table, resp.status_code, resp.text[:500])
+            resp.raise_for_status()
+        return resp.json() if resp.text.strip() else []
+
+    def table_exists(self, table: str) -> bool:
+        """检查表是否可访问"""
+        try:
+            self.select(table, limit=1)
+            return True
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                return False
+            # 其他错误（如空表返回 200 但 RLS 限制）可能仍表示表存在
+            log.warning("表检查 '%s' 返回异常: %s", table, e)
+            return True  # 假设表存在，让后续 upsert 报具体错误
 
 
 # ---------------------------------------------------------------------------
@@ -79,106 +118,50 @@ class Role:
 
 
 # ---------------------------------------------------------------------------
-# 猫耳FM 爬取
+# 猫耳FM 爬取（框架）
 # ---------------------------------------------------------------------------
 def fetch_maoer_dramas() -> Iterable[Drama]:
     """爬取猫耳FM百合标签下的广播剧元数据"""
-    if requests is None:
-        log.warning("requests 未安装，跳过猫耳FM爬取")
-        return
-
-    # 猫耳FM 搜索/分类接口（公开，无需登录）
-    # 注意：猫耳FM没有公开的正式API文档，以下URL基于公开可访问的搜索页面
     search_url = "https://www.missevan.com/mdrama/search"
     keywords = ["百合", "GL", "橘气"]
-
-    seen_ids: set[str] = set()
     for kw in keywords:
         try:
-            params = {"s": kw, "type": 1}  # type=1 广播剧
+            params = {"s": kw, "type": 1}
             resp = requests.get(search_url, params=params, timeout=15,
-                                headers={"User-Agent": "YuriDataBot/1.0 (+https://github.com/yuri-data)"})
+                                headers={"User-Agent": "YuriDataBot/1.0"})
             resp.raise_for_status()
-            # 猫耳搜索返回HTML，需要解析
-            # 这里仅做框架，实际解析需根据页面结构调整
             log.info("猫耳FM搜索 '%s': status=%d", kw, resp.status_code)
             time.sleep(REQUEST_DELAY)
         except Exception as e:
             log.warning("猫耳FM搜索 '%s' 失败: %s", kw, e)
 
 
-def fetch_maoer_drama_detail(drama_id: str) -> dict | None:
-    """获取猫耳FM单个广播剧详情"""
-    if requests is None:
-        return None
-    try:
-        url = f"https://www.missevan.com/mdrama/{drama_id}"
-        resp = requests.get(url, timeout=15,
-                            headers={"User-Agent": "YuriDataBot/1.0"})
-        resp.raise_for_status()
-        # 解析HTML提取元数据（标题、播放量、CV等）
-        # 实际实现需要BeautifulSoup解析
-        return {"id": drama_id, "source": "maoer"}
-    except Exception as e:
-        log.warning("猫耳FM详情 %s 失败: %s", drama_id, e)
-        return None
-
-
 # ---------------------------------------------------------------------------
-# 喜马拉雅 爬取
+# 喜马拉雅 爬取（框架）
 # ---------------------------------------------------------------------------
 def fetch_ximalaya_dramas() -> Iterable[Drama]:
     """爬取喜马拉雅百合广播剧元数据"""
-    if requests is None:
-        log.warning("requests 未安装，跳过喜马拉雅爬取")
-        return
-
-    # 喜马拉雅搜索接口（公开）
     search_url = "https://www.ximalaya.com/revision/search/main"
-    keywords = ["百合广播剧", "GL广播剧", "橘气广播剧"]
-
+    keywords = ["百合广播剧", "GL广播剧"]
     for kw in keywords:
         try:
             params = {"kw": kw, "page": 1, "pageSize": 20, "condition": "radio"}
             resp = requests.get(search_url, params=params, timeout=15,
-                                headers={"User-Agent": "YuriDataBot/1.0 (+https://github.com/yuri-data)"})
+                                headers={"User-Agent": "YuriDataBot/1.0"})
             resp.raise_for_status()
             data = resp.json()
-            # 解析搜索结果
             albums = data.get("data", {}).get("album", {}).get("albums", [])
             for album in albums:
-                title = album.get("title", "")
-                play_count = album.get("playCount", 0)
-                # 提取更多字段...
-                log.info("喜马拉雅: %s (播放 %d)", title, play_count)
+                log.info("喜马拉雅: %s (播放 %s)", album.get("title", ""), album.get("playCount", 0))
             time.sleep(REQUEST_DELAY)
         except Exception as e:
             log.warning("喜马拉雅搜索 '%s' 失败: %s", kw, e)
 
 
 # ---------------------------------------------------------------------------
-# 漫播 爬取（框架）
-# ---------------------------------------------------------------------------
-def fetch_manbo_dramas() -> Iterable[Drama]:
-    """漫播平台爬取框架 - 需要根据实际接口调整"""
-    log.info("漫播爬取框架已就绪，待接入具体API")
-    return
-
-
-# ---------------------------------------------------------------------------
-# 听姬 爬取（框架）
-# ---------------------------------------------------------------------------
-def fetch_tingji_dramas() -> Iterable[Drama]:
-    """听姬平台爬取框架 - 需要根据实际接口调整"""
-    log.info("听姬爬取框架已就绪，待接入具体API")
-    return
-
-
-# ---------------------------------------------------------------------------
-# 手动维护的高质量数据（作为兜底和补充）
+# 手动维护的高质量数据
 # ---------------------------------------------------------------------------
 def fetch_curated_dramas() -> Iterable[Drama]:
-    """手动维护的精选数据，确保数据质量"""
     yield Drama(id="dr1", title="我亲爱的法医小姐", original_work="酒暖回忆",
                 platform="喜马拉雅", year=2023, total_episodes=80,
                 play_count=9_130_000, rating_avg=4.8, rating_count=12400,
@@ -308,7 +291,6 @@ def dedupe(items: Iterable[Drama]) -> list[Drama]:
     out: list[Drama] = []
     for d in items:
         if d.id in seen:
-            log.info("skip duplicate drama id=%s", d.id)
             continue
         seen.add(d.id)
         out.append(d)
@@ -316,28 +298,18 @@ def dedupe(items: Iterable[Drama]) -> list[Drama]:
 
 
 # ---------------------------------------------------------------------------
-# 写入 Supabase
+# 写入 Supabase（使用 REST API）
 # ---------------------------------------------------------------------------
-def _clean_payload(item: dict) -> dict:
-    """移除 None 值，避免 PGRST125 错误"""
-    return {k: v for k, v in item.items() if v is not None}
+def _clean(item: dict) -> dict:
+    """移除 None 值和空列表"""
+    return {k: v for k, v in item.items() if v is not None and v != []}
 
 
-def _verify_table(client, table_name: str) -> bool:
-    """验证表是否存在且可访问"""
-    try:
-        client.table(table_name).select("id" if table_name != "drama_cv_roles" else "drama_id").limit(1).execute()
-        return True
-    except Exception as e:
-        log.error("表 '%s' 验证失败: %s", table_name, e)
-        return False
-
-
-def upsert_dramas(client, dramas: list[Drama]) -> None:
+def upsert_dramas(client: SupabaseREST, dramas: list[Drama]) -> None:
     if not dramas:
         return
     payload = [
-        _clean_payload({
+        _clean({
             "id": d.id,
             "title": d.title,
             "original_work": d.original_work or None,
@@ -355,33 +327,25 @@ def upsert_dramas(client, dramas: list[Drama]) -> None:
         })
         for d in dramas
     ]
-    log.info("upserting %d dramas (sample: %s)", len(payload), payload[0] if payload else "empty")
-    try:
-        result = client.table("dramas").upsert(payload).execute()
-        log.info("dramas upsert OK, count=%d", len(result.data) if result.data else 0)
-    except Exception as e:
-        log.error("dramas upsert FAILED: %s", e)
-        raise
+    log.info("upserting %d dramas...", len(payload))
+    result = client.upsert("dramas", payload)
+    log.info("dramas upsert OK, returned=%d", len(result))
 
 
-def upsert_cvs(client, cvs: list[Cv]) -> None:
+def upsert_cvs(client: SupabaseREST, cvs: list[Cv]) -> None:
     if not cvs:
         return
-    payload = [_clean_payload({"id": c.id, "name": c.name, "bio": c.bio or None}) for c in cvs]
-    log.info("upserting %d cvs", len(payload))
-    try:
-        result = client.table("cvs").upsert(payload).execute()
-        log.info("cvs upsert OK, count=%d", len(result.data) if result.data else 0)
-    except Exception as e:
-        log.error("cvs upsert FAILED: %s", e)
-        raise
+    payload = [_clean({"id": c.id, "name": c.name, "bio": c.bio or None}) for c in cvs]
+    log.info("upserting %d cvs...", len(payload))
+    result = client.upsert("cvs", payload)
+    log.info("cvs upsert OK, returned=%d", len(result))
 
 
-def upsert_roles(client, roles: list[Role]) -> None:
+def upsert_roles(client: SupabaseREST, roles: list[Role]) -> None:
     if not roles:
         return
     payload = [
-        _clean_payload({
+        _clean({
             "drama_id": r.drama_id,
             "cv_id": r.cv_id,
             "role_type": r.role_type,
@@ -389,13 +353,9 @@ def upsert_roles(client, roles: list[Role]) -> None:
         })
         for r in roles
     ]
-    log.info("upserting %d roles", len(payload))
-    try:
-        result = client.table("drama_cv_roles").upsert(payload).execute()
-        log.info("roles upsert OK, count=%d", len(result.data) if result.data else 0)
-    except Exception as e:
-        log.error("roles upsert FAILED: %s", e)
-        raise
+    log.info("upserting %d roles...", len(payload))
+    result = client.upsert("drama_cv_roles", payload)
+    log.info("roles upsert OK, returned=%d", len(result))
 
 
 # ---------------------------------------------------------------------------
@@ -407,8 +367,7 @@ def trigger_vercel_deploy() -> None:
         log.warning("VERCEL_DEPLOY_HOOK 未设置，跳过触发重建")
         return
     try:
-        import requests as req
-        resp = req.post(hook, timeout=15)
+        resp = requests.post(hook, timeout=15)
         log.info("Vercel deploy hook 响应: %d", resp.status_code)
     except Exception as e:
         log.error("触发 Vercel 重建失败: %s", e)
@@ -423,49 +382,30 @@ def main() -> int:
     parser.add_argument("--skip-crawl", action="store_true", help="跳过在线爬取，仅使用手动数据")
     args = parser.parse_args()
 
-    url = os.environ.get("SUPABASE_URL")
-    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    url = os.environ.get("SUPABASE_URL", "").strip()
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 
     aliases = load_aliases()
 
-    # 收集数据：手动数据 + 在线爬取
+    # 收集数据
     all_dramas: list[Drama] = list(fetch_curated_dramas())
     all_cvs: list[Cv] = list(fetch_curated_cvs())
     all_roles: list[Role] = list(fetch_curated_roles())
 
     if not args.skip_crawl:
         log.info("开始在线爬取...")
-        # 各平台爬取（当前为框架，待接入具体API）
-        try:
-            crawl_dramas = list(fetch_maoer_dramas())
-            all_dramas.extend(crawl_dramas)
-        except Exception as e:
-            log.warning("猫耳FM爬取异常: %s", e)
-
-        try:
-            crawl_dramas = list(fetch_ximalaya_dramas())
-            all_dramas.extend(crawl_dramas)
-        except Exception as e:
-            log.warning("喜马拉雅爬取异常: %s", e)
-
-        try:
-            crawl_dramas = list(fetch_manbo_dramas())
-            all_dramas.extend(crawl_dramas)
-        except Exception as e:
-            log.warning("漫播爬取异常: %s", e)
-
-        try:
-            crawl_dramas = list(fetch_tingji_dramas())
-            all_dramas.extend(crawl_dramas)
-        except Exception as e:
-            log.warning("听姬爬取异常: %s", e)
+        for fn, name in [(fetch_maoer_dramas, "猫耳FM"), (fetch_ximalaya_dramas, "喜马拉雅")]:
+            try:
+                all_dramas.extend(list(fn()))
+            except Exception as e:
+                log.warning("%s 爬取异常: %s", name, e)
 
     # 去重 + 归一化
     all_dramas = dedupe(all_dramas)
     for c in all_cvs:
         c.name = normalize_name(c.name, aliases)
 
-    log.info("summary: dramas=%d, cvs=%d, roles=%d", len(all_dramas), len(all_cvs), len(all_roles))
+    log.info("数据汇总: dramas=%d, cvs=%d, roles=%d", len(all_dramas), len(all_cvs), len(all_roles))
 
     if args.dry_run:
         print(json.dumps(
@@ -475,30 +415,32 @@ def main() -> int:
         ))
         return 0
 
+    # 验证环境变量
     if not url or not service_key:
-        log.error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 未设置，跳过写入")
+        log.error("SUPABASE_URL 或 SUPABASE_SERVICE_ROLE_KEY 未设置")
+        log.error("请在 GitHub 仓库 Settings → Secrets → Actions 中添加这两个值")
         return 1
 
-    if create_client is None:
-        log.error("未安装 supabase 客户端：请运行 pip install supabase")
-        return 1
+    log.info("Supabase URL: %s", url)
 
-    client = create_client(url, service_key)
+    # 创建 REST 客户端
+    client = SupabaseREST(url, service_key)
 
-    # 验证表是否存在
+    # 验证表
     log.info("验证 Supabase 表...")
     for table in ["dramas", "cvs", "drama_cv_roles"]:
-        if not _verify_table(client, table):
-            log.error("表 '%s' 不存在或不可访问。请先在 Supabase SQL Editor 中执行 schema.sql", table)
+        if not client.table_exists(table):
+            log.error("表 '%s' 不存在！请先在 Supabase SQL Editor 中执行 schema.sql", table)
             return 1
-    log.info("所有表验证通过")
+    log.info("所有表验证通过 ✓")
 
+    # 写入数据
     upsert_dramas(client, all_dramas)
     upsert_cvs(client, all_cvs)
     upsert_roles(client, all_roles)
-    log.info("写入完成")
+    log.info("全部写入完成 ✓")
 
-    # 触发 Vercel 重建
+    # 触发重建
     trigger_vercel_deploy()
 
     return 0
