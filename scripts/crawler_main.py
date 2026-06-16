@@ -318,31 +318,31 @@ def dedupe(items: Iterable[Drama]) -> list[Drama]:
 # ---------------------------------------------------------------------------
 # 写入 Supabase（使用 REST API）
 # ---------------------------------------------------------------------------
-def _clean(item: dict) -> dict:
-    """移除 None 值和空列表"""
-    return {k: v for k, v in item.items() if v is not None and v != []}
-
+# 注意：PostgREST 要求同一批次 upsert 的所有对象必须有完全相同的字段（key）
+# 所以即使字段值为 None，也必须显式包含，不能移除
+# ---------------------------------------------------------------------------
 
 def upsert_dramas(client: SupabaseREST, dramas: list[Drama]) -> None:
     if not dramas:
         return
+    # 所有对象必须有完全相同的 key（PostgREST PGRST102 约束）
     payload = [
-        _clean({
+        {
             "id": d.id,
             "title": d.title,
-            "original_work": d.original_work or None,
-            "platform": d.platform or None,
-            "year": d.year or None,
-            "total_episodes": d.total_episodes or None,
+            "original_work": d.original_work if d.original_work else None,
+            "platform": d.platform if d.platform else None,
+            "year": d.year if d.year else None,
+            "total_episodes": d.total_episodes if d.total_episodes else None,
             "play_count": d.play_count,
             "rating_avg": d.rating_avg,
             "rating_count": d.rating_count,
-            "description": d.description or None,
-            "studio": d.studio or None,
-            "director": d.director or None,
-            "source_url": d.source_url or None,
+            "description": d.description if d.description else None,
+            "studio": d.studio if d.studio else None,
+            "director": d.director if d.director else None,
+            "source_url": d.source_url if d.source_url else None,
             "tags": d.tags if d.tags else None,
-        })
+        }
         for d in dramas
     ]
     log.info("upserting %d dramas...", len(payload))
@@ -353,7 +353,11 @@ def upsert_dramas(client: SupabaseREST, dramas: list[Drama]) -> None:
 def upsert_cvs(client: SupabaseREST, cvs: list[Cv]) -> None:
     if not cvs:
         return
-    payload = [_clean({"id": c.id, "name": c.name, "bio": c.bio or None}) for c in cvs]
+    # 所有对象必须有完全相同的 key
+    payload = [
+        {"id": c.id, "name": c.name, "bio": c.bio if c.bio else None}
+        for c in cvs
+    ]
     log.info("upserting %d cvs...", len(payload))
     result = client.upsert("cvs", payload)
     log.info("cvs upsert OK, returned=%d", len(result))
@@ -362,13 +366,14 @@ def upsert_cvs(client: SupabaseREST, cvs: list[Cv]) -> None:
 def upsert_roles(client: SupabaseREST, roles: list[Role]) -> None:
     if not roles:
         return
+    # 所有对象必须有完全相同的 key
     payload = [
-        _clean({
+        {
             "drama_id": r.drama_id,
             "cv_id": r.cv_id,
             "role_type": r.role_type,
-            "character_name": r.character_name or None,
-        })
+            "character_name": r.character_name if r.character_name else None,
+        }
         for r in roles
     ]
     log.info("upserting %d roles...", len(payload))
