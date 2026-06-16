@@ -2,8 +2,15 @@ import { defineConfig } from 'astro/config';
 import vue from '@astrojs/vue';
 import unocss from '@unocss/astro';
 import { presetUno, presetAttributify, presetIcons } from 'unocss';
+import vercel from '@astrojs/vercel/serverless';
 
 export default defineConfig({
+  output: 'server',
+  adapter: vercel({
+    webAnalytics: {
+      enabled: true
+    }
+  }),
   integrations: [
     vue(),
     unocss({
