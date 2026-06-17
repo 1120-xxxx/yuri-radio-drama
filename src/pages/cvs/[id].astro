@@ -1,0 +1,113 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Badge from '../../components/Badge.astro';
+import { getAllCvs, getCvById, getCvRoles, getDramaById } from '../../lib/data';
+
+export async function getStaticPaths() {
+  const all = await getAllCvs();
+  return all.map((c) => ({ params: { id: c.id } }));
+}
+
+const { id } = Astro.params;
+const cv = await getCvById(id);
+if (!cv) throw new Error(`CV not found: ${id}`);
+const roles = await getCvRoles(id);
+
+async function withTitle(role: { drama_id: string; role_type: string; character_name?: string }) {
+  const drama = await getDramaById(role.drama_id);
+  return {
+    drama_id: role.drama_id,
+    role_type: role.role_type,
+    character_name: role.character_name,
+    title: drama?.title ?? role.drama_id,
+    play_count: drama?.play_count ?? 0,
+    year: drama?.year ?? 0,
+    rating_avg: drama?.rating_avg ?? 0,
+    platform: drama?.platform ?? '',
+  };
+}
+
+const withTitles = await Promise.all(roles.map(withTitle));
+const mainList = withTitles.filter((r) => r.role_type === 'main').sort((a, b) => b.play_count - a.play_count);
+const supportList = withTitles.filter((r) => r.role_type === 'support').sort((a, b) => b.play_count - a.play_count);
+const directorList = withTitles.filter((r) => r.role_type === 'director').sort((a, b) => b.play_count - a.play_count);
+
+function fmt(n: number) { return n >= 10000 ? `${(n / 10000).toFixed(1)} 万` : String(n); }
+---
+
+<BaseLayout title={`${cv.name} · CV 详情`}>
+  <nav class="text-sm text-text-muted mb-6 flex items-center gap-2">
+    <a href="/" class="hover:text-brand-300 transition-colors">首页</a>
+    <span class="text-text-faint">/</span>
+    <a href="/cvs/" class="hover:text-brand-300 transition-colors">CV 索引</a>
+    <span class="text-text-faint">/</span>
+    <span class="text-text-soft">{cv.name}</span>
+  </nav>
+
+  <section class="grid gap-6 md:grid-cols-[260px_1fr] mb-6">
+    <div class="card text-center">
+      {cv.avatar_url ? (
+        <img src={cv.avatar_url} alt={cv.name} class="w-24 h-24 mx-auto rounded-full object-cover bg-gradient-to-br from-brand-400/20 to-accent-400/20 mb-4 shadow-xl shadow-brand-500/20" />
+      ) : (
+        <div class="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-brand-400 via-accent-400 to-cyanx-500 flex items-center justify-center text-4xl text-white font-bold mb-4 shadow-xl shadow-brand-500/20">
+          {cv.name.slice(0, 1)}
+        </div>
+      )}
+      <h1 class="text-xl font-bold text-text">{cv.name}</h1>
+      {cv.bio && <p class="text-sm text-text-muted mt-2">{cv.bio}</p>}
+      <div class="grid grid-cols-3 gap-2 mt-5 pt-5 border-t border-border">
+        <div><div class="text-xs text-text-muted">主役</div><div class="text-lg font-bold bg-gradient-to-r from-brand-400 to-accent-400 bg-clip-text text-transparent">{mainList.length}</div></div>
+        <div><div class="text-xs text-text-muted">协役</div><div class="text-lg font-bold text-text-soft">{supportList.length}</div></div>
+        <div><div class="text-xs text-text-muted">导演</div><div class="text-lg font-bold bg-gradient-to-r from-accent-400 to-cyanx-400 bg-clip-text text-transparent">{directorList.length}</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="section-title">参演作品</h2>
+      {mainList.length > 0 && (
+        <div class="mb-6">
+          <h3 class="text-xs font-semibold text-text-muted mb-3 uppercase tracking-wide">主役作品</h3>
+          <ul class="space-y-1">
+            {mainList.map((r) => (
+              <li class="py-3 flex items-center gap-3 border-b border-border last:border-0 hover:bg-bg-darker hover:border-brand-500/20 rounded-xl px-3 -mx-3 transition-all">
+                <a href={`/dramas/${r.drama_id}/`} class="flex-1 font-medium text-text-soft hover:text-brand-300 transition-colors truncate">{r.title}</a>
+                {r.character_name && <span class="text-xs text-text-muted">{r.character_name}</span>}
+                <Badge color="gray">{r.platform}</Badge>
+                <span class="text-sm text-text-muted tabular-nums">{fmt(r.play_count)}</span>
+                <span class="text-sm font-semibold tabular-nums bg-gradient-to-r from-brand-400 to-accent-400 bg-clip-text text-transparent">★ {r.rating_avg.toFixed(2)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {supportList.length > 0 && (
+        <div class="mb-6">
+          <h3 class="text-xs font-semibold text-text-muted mb-3 uppercase tracking-wide">协役作品</h3>
+          <ul class="space-y-1">
+            {supportList.map((r) => (
+              <li class="py-2 flex items-center gap-3 border-b border-border last:border-0 text-sm">
+                <a href={`/dramas/${r.drama_id}/`} class="flex-1 text-text-soft hover:text-brand-300 transition-colors truncate">{r.title}</a>
+                <span class="text-xs text-text-muted">{r.character_name ?? ''}</span>
+                <span class="text-xs text-text-muted tabular-nums">{fmt(r.play_count)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {directorList.length > 0 && (
+        <div>
+          <h3 class="text-xs font-semibold text-text-muted mb-3 uppercase tracking-wide">配音导演作品</h3>
+          <ul class="space-y-1">
+            {directorList.map((r) => (
+              <li class="py-2 flex items-center gap-3 border-b border-border last:border-0 text-sm">
+                <a href={`/dramas/${r.drama_id}/`} class="flex-1 text-text-soft hover:text-brand-300 transition-colors truncate">{r.title}</a>
+                <span class="text-xs text-text-muted tabular-nums">{fmt(r.play_count)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {withTitles.length === 0 && <p class="text-sm text-text-muted">暂无相关作品信息。</p>}
+    </div>
+  </section>
+</BaseLayout>

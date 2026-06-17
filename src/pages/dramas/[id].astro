@@ -1,0 +1,125 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Badge from '../../components/Badge.astro';
+import RatingIsland from '../../islands/RatingIsland.vue';
+import { getAllDramas, getDramaById, getDramaRoles } from '../../lib/data';
+
+export async function getStaticPaths() {
+  const all = await getAllDramas();
+  return all.map((d) => ({ params: { id: d.id } }));
+}
+
+const { id } = Astro.params;
+const drama = await getDramaById(id);
+if (!drama) throw new Error(`Drama not found: ${id}`);
+const roles = await getDramaRoles(id);
+
+function fmt(n: number) { return n >= 10000 ? `${(n / 10000).toFixed(1)} 万` : String(n); }
+const mainRoles = roles.filter((r) => r.role_type === 'main');
+const supportRoles = roles.filter((r) => r.role_type === 'support');
+const directors = roles.filter((r) => r.role_type === 'director');
+---
+
+<BaseLayout title={`${drama.title} · 详情`}>
+  <nav class="text-sm text-text-muted mb-6 flex items-center gap-2">
+    <a href="/" class="hover:text-brand-300 transition-colors">首页</a>
+    <span class="text-text-faint">/</span>
+    <a href="/dramas/" class="hover:text-brand-300 transition-colors">剧集库</a>
+    <span class="text-text-faint">/</span>
+    <span class="text-text-soft">{drama.title}</span>
+  </nav>
+
+  <section class="grid gap-6 md:grid-cols-[260px_1fr] mb-8">
+    <div class="card">
+      <div class="aspect-[3/4] w-full rounded-2xl bg-gradient-to-br from-brand-500/20 via-accent-500/20 to-cyanx-500/20 flex items-center justify-center text-7xl border border-border">
+        🎙️
+      </div>
+    </div>
+    <div class="card">
+      <h1 class="text-2xl md:text-3xl font-bold mb-3 text-text">{drama.title}</h1>
+      <div class="flex flex-wrap gap-2 mb-5">
+        <Badge color="brand">{drama.platform}</Badge>
+        <Badge color="accent">{drama.year} 年</Badge>
+        <Badge color="cyan">共 {drama.total_episodes} 集</Badge>
+      </div>
+      <div class="grid grid-cols-3 gap-3 mb-5 py-4 rounded-2xl bg-bg-darker border border-border">
+        <div class="text-center">
+          <div class="text-xs text-text-muted mb-1">评分</div>
+          <div class="text-2xl font-bold bg-gradient-to-r from-brand-400 to-accent-400 bg-clip-text text-transparent">{drama.rating_avg.toFixed(2)}</div>
+        </div>
+        <div class="text-center">
+          <div class="text-xs text-text-muted mb-1">评分人数</div>
+          <div class="text-2xl font-bold text-text-soft tabular-nums">{drama.rating_count}</div>
+        </div>
+        <div class="text-center">
+          <div class="text-xs text-text-muted mb-1">播放量</div>
+          <div class="text-2xl font-bold text-text-soft tabular-nums">{fmt(drama.play_count)}</div>
+        </div>
+      </div>
+      {drama.tags && drama.tags.length > 0 && (
+        <div class="mb-5 p-4 rounded-2xl bg-gradient-to-br from-bg-darker/80 to-bg-soft/40 border border-border/60">
+          <div class="text-xs text-text-muted mb-2">🏷️ 风格标签</div>
+          <div class="flex flex-wrap gap-2">
+            {drama.tags.map((t) => (
+              <span class="px-3 py-1 rounded-full text-xs bg-bg-darker text-text-soft border border-border">{t}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {drama.description && <p class="text-sm text-text-soft leading-relaxed mb-5">{drama.description}</p>}}
+      <dl class="grid gap-2 text-sm">
+        {drama.original_work && <div class="flex gap-3"><dt class="w-20 text-text-muted flex-shrink-0">原作</dt><dd class="text-text-soft">{drama.original_work}</dd></div>}
+        {drama.studio && <div class="flex gap-3"><dt class="w-20 text-text-muted flex-shrink-0">制作方</dt><dd class="text-text-soft">{drama.studio}</dd></div>}
+        {drama.director && <div class="flex gap-3"><dt class="w-20 text-text-muted flex-shrink-0">配音导演</dt><dd class="text-text-soft">{drama.director}</dd></div>}
+        {drama.source_url && <div class="flex gap-3"><dt class="w-20 text-text-muted flex-shrink-0">来源</dt><dd><a href={drama.source_url} target="_blank" rel="noopener" class="text-brand-300 hover:text-brand-200 transition-colors">{drama.source_url}</a></dd></div>}
+      </dl>
+    </div>
+  </section>
+
+  {roles.length > 0 && (
+    <section class="card mb-6">
+      <h2 class="section-title">CV / 配音信息</h2>
+      {mainRoles.length > 0 && (
+        <div class="mb-5">
+          <h3 class="text-xs font-semibold text-text-muted mb-3 uppercase tracking-wide">主役</h3>
+          <ul class="flex flex-wrap gap-2">
+            {mainRoles.map((r) => (
+              <li>
+                <a href={`/cvs/${r.cv_id}/`} class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-brand-500/15 to-accent-500/15 border border-brand-500/30 text-brand-200 text-sm hover:from-brand-500/25 hover:to-accent-500/25 transition-all">
+                  <span class="font-semibold text-text-soft">{r.cv_name ?? r.cv_id}</span>
+                  {r.character_name && <span class="text-xs text-text-muted">· {r.character_name}</span>}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {supportRoles.length > 0 && (
+        <div class="mb-5">
+          <h3 class="text-xs font-semibold text-text-muted mb-3 uppercase tracking-wide">协役</h3>
+          <ul class="flex flex-wrap gap-2">
+            {supportRoles.map((r) => (
+              <li>
+                <a href={`/cvs/${r.cv_id}/`} class="inline-block px-4 py-2 rounded-xl bg-bg-darker border border-border text-text-soft text-sm hover:border-brand-500/30 transition-all">{r.cv_name ?? r.cv_id}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {directors.length > 0 && (
+        <div>
+          <h3 class="text-xs font-semibold text-text-muted mb-3 uppercase tracking-wide">配音导演</h3>
+          <ul class="flex flex-wrap gap-2">
+            {directors.map((r) => (
+              <li>
+                <a href={`/cvs/${r.cv_id}/`} class="inline-block px-4 py-2 rounded-xl bg-gradient-to-r from-accent-500/15 to-brand-500/15 border border-accent-500/30 text-accent-200 text-sm hover:from-accent-500/25 hover:to-brand-500/25 transition-all">{r.cv_name ?? r.cv_id}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  )}
+
+  <RatingIsland client:load dramaId={drama.id} dramaTitle={drama.title} fallbackAvg={drama.rating_avg} fallbackCount={drama.rating_count} />
+</BaseLayout>

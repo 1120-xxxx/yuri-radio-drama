@@ -1,0 +1,25 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import AdminRatings from '../../islands/AdminRatings.vue';
+---
+
+<BaseLayout title="开发者后台 · 评分与短评管理">
+  <header class="mb-8">
+    <h1 class="text-3xl md:text-4xl font-bold mb-2">
+      <span class="bg-gradient-to-r from-gold-400 via-accent-300 to-brand-300 bg-clip-text text-transparent">开发者后台</span>
+    </h1>
+    <p class="text-text-muted">查看所有用户提交的评分与短评数据。需配置 Supabase 才能加载真实数据。</p>
+  </header>
+
+  <div class="card mb-6">
+    <h2 class="section-title mb-3">Supabase 配置状态</h2>
+    <ul class="text-sm text-text-soft space-y-1.5">
+      <li>• 配置文件：<code class="px-2 py-0.5 rounded bg-bg-darker text-brand-300">.env</code>（根目录，从 <code class="px-2 py-0.5 rounded bg-bg-darker text-brand-300">.env.example</code> 复制）</li>
+      <li>• 必填变量：<code class="px-2 py-0.5 rounded bg-bg-darker text-brand-300">PUBLIC_SUPABASE_URL</code>、<code class="px-2 py-0.5 rounded bg-bg-darker text-brand-300">PUBLIC_SUPABASE_ANON_KEY</code></li>
+      <li>• 数据表：<code class="px-2 py-0.5 rounded bg-bg-darker text-brand-300">ratings</code>（评分/短评）、<code class="px-2 py-0.5 rounded bg-bg-darker text-brand-300">dramas</code>（剧集评分聚合）</li>
+      <li>• 初始化 SQL：<a href="https://supabase.com/dashboard/project/_/sql" class="text-brand-300 hover:underline" target="_blank" rel="noopener">Supabase SQL Editor</a> 执行 <code class="px-2 py-0.5 rounded bg-bg-darker text-brand-300">supabase/schema.sql</code></li>
+    </ul>
+  </div>
+
+  <AdminRatings client:load />
+</BaseLayout>
