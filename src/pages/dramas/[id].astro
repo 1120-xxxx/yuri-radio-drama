@@ -41,6 +41,7 @@ const directors = roles.filter((r) => r.role_type === 'director');
         <Badge color="brand">{drama.platform}</Badge>
         <Badge color="accent">{drama.year} 年</Badge>
         <Badge color="cyan">共 {drama.total_episodes} 集</Badge>
+        {drama.is_completed && <Badge color="gold">已完结</Badge>}
       </div>
       <div class="grid grid-cols-3 gap-3 mb-5 py-4 rounded-2xl bg-bg-darker border border-border">
         <div class="text-center">

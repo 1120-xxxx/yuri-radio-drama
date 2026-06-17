@@ -1,9 +1,11 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import CvUniverse from '../islands/CvUniverse.vue';
-import { getCvCollaborations } from '../lib/data';
+import CvSearch from '../islands/CvSearch.vue';
+import { getCvCollaborations, getAllCvs } from '../lib/data';
 
 const collaborations = await getCvCollaborations(2);
+const allCvs = await getAllCvs();
 ---
 
 <BaseLayout title="CV 宇宙 · 百合广播剧数据站">
@@ -13,6 +15,11 @@ const collaborations = await getCvCollaborations(2);
     </h1>
     <p class="text-text-muted">探索CV之间的合作关系网络，发现高频合作CP。数据基于已收录的剧集CV关联自动计算。</p>
   </header>
+
+  <!-- CV 搜索栏 -->
+  <section class="mb-8">
+    <CvSearch client:load cvs={allCvs} />
+  </section>
 
   <CvUniverse client:load collaborations={collaborations} />
 </BaseLayout>

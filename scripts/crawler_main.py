@@ -138,7 +138,11 @@ class SupabaseREST:
                 log.error("→ 权限不足，请确认使用的是 service_role key 而非 anon key")
             elif resp.status_code == 409:
                 log.error("→ 主键冲突，upsert 应该能处理此情况，请检查 Prefer header 是否生效")
-            resp.raise_for_status()
+            # 抛出包含 body 的异常，便于上层降级处理
+            raise requests.exceptions.HTTPError(
+                f"{resp.status_code} Client Error: {resp.text[:500]} for url: {resp.url}",
+                response=resp,
+            )
         return resp.json() if resp.text.strip() else []
 
     def table_exists(self, table: str) -> bool:
@@ -211,6 +215,7 @@ class Drama:
     director: str | None = None
     source_url: str | None = None
     tags: list[str] = field(default_factory=list)
+    is_completed: bool = False
 
 
 @dataclass
@@ -274,21 +279,37 @@ YURI_KEYWORDS = {"百合", "GL", "橘气", "橘向", "girls love", "girls' love"
 # BL/非百合关键词（包含这些词则排除）
 BL_KEYWORDS = {"耽美", "BL", "纯爱", "男男", "同志", "攻×受", "攻受", "男生向",
                "腐", "兄贵", "男频", "bg向", "BG向", "言情向"}
+# 强 BL 信号：明确标注为耽美/BL 作品（即使描述中同时出现"百合"也应排除）
+STRONG_BL_KEYWORDS = {"耽美广播剧", "纯爱耽美", "现代耽美", "古风耽美", "BL广播剧",
+                      "耽美与百合", "BL\\BG", "BL/BG", "BL\\GL", "BL/GL"}
 
 
 def is_yuri_content(title: str, description: str | None = None, tags: list[str] | None = None) -> bool:
-    """判断一部广播剧是否属于百合/GL题材"""
+    """判断一部广播剧是否属于百合/GL题材
+
+    判断优先级：
+    1. 强 BL 信号（如"耽美广播剧"）→ 直接排除
+    2. BL 关键词（如"耽美"）→ 排除（即使含百合也排除，避免误判）
+    3. 百合关键词 → 通过
+    4. 都没有 → 保守排除
+    """
     text = f"{title} {description or ''} {' '.join(tags or [])}".lower()
 
-    # 如果包含BL关键词且不包含百合关键词，排除
+    # 1. 强 BL 信号优先级最高
+    for kw in STRONG_BL_KEYWORDS:
+        if kw.lower() in text:
+            return False
+
     has_yuri = any(kw.lower() in text for kw in YURI_KEYWORDS)
     has_bl = any(kw.lower() in text for kw in BL_KEYWORDS)
 
-    if has_yuri:
-        return True
+    # 2. BL 关键词优先于百合关键词（避免"耽美与百合"这类混合内容误判）
     if has_bl:
         return False
-    # 两者都没有，无法判断，保守排除
+    # 3. 百合关键词通过
+    if has_yuri:
+        return True
+    # 4. 两者都没有，保守排除
     return False
 
 
@@ -736,13 +757,25 @@ def _fanjiao_sign(params: dict) -> str:
     return _hashlib.md5(raw.encode()).hexdigest()
 
 
-def _fanjiao_get(path: str, params: dict) -> dict:
-    """调用饭角API（带重试）"""
+def _fanjiao_get(path: str, params: dict, max_retries: int = 3) -> dict:
+    """调用饭角API（带重试，包括业务错误 code=62601 服务忙）"""
     sig = _fanjiao_sign(params)
     url = f"{FANJIAO_BASE}{path}"
     headers = {**FANJIAO_HEADERS, "signature": sig}
-    resp = _request_with_retry("GET", url, params=params, headers=headers)
-    return resp.json()
+    for attempt in range(max_retries):
+        resp = _request_with_retry("GET", url, params=params, headers=headers)
+        data = resp.json()
+        # code=62601 表示"服务忙"，需要等待后重试
+        if data.get("code") == 62601 and attempt < max_retries - 1:
+            wait = 1.0 * (attempt + 1)
+            log.debug("饭角API服务忙(第%d次)，%.1fs后重试: %s", attempt + 1, wait, path)
+            time.sleep(wait)
+            # 重新签名（参数可能需要时间戳变化）
+            sig = _fanjiao_sign(params)
+            headers = {**FANJIAO_HEADERS, "signature": sig}
+            continue
+        return data
+    return data
 
 
 # ---- 饭角音频描述解析（提取CV、作者、制作方等结构化信息） ----
@@ -953,6 +986,28 @@ def _parse_fanjiao_episodes(desc: str) -> int:
     return 0
 
 
+# 完结状态关键词：描述中出现这些词则判定为已完结
+_COMPLETED_KEYWORDS = _re.compile(r"(完结季|已完结|全一期|全两期|全三期|全四期|全五期|全六期|全七期|全八期|全九期|全十期|完结$)")
+
+
+def _parse_is_completed(desc: str | None, total_episodes: int = 0) -> bool:
+    """从描述中解析是否完结。
+    判定规则：
+    1. 描述包含"完结季"、"已完结"、"全X期"等关键词 → 已完结
+    2. 描述包含"连载中"、"更新中"、"未完结" → 未完结
+    3. 无明确关键词但有集数信息 → 默认未完结（连载中）
+    """
+    if not desc:
+        return False
+    # 明确的连载中关键词优先
+    if _re.search(r"(连载中|更新中|未完结|待续|未完待续)", desc):
+        return False
+    # 完结关键词
+    if _COMPLETED_KEYWORDS.search(desc):
+        return True
+    return False
+
+
 def _parse_fanjiao_year(desc: str, publish_date: str | None = None) -> int:
     """从描述或发布日期中提取年份"""
     if publish_date:
@@ -1057,30 +1112,37 @@ def fetch_fanjiao_dramas(result: CrawlResult | None = None) -> Iterable[Drama]:
     seen_ids: set[str] = set()
     all_albums: list[dict] = []  # 从排行榜收集的专辑（去重）
 
-    # Step 1: 收集排行榜专辑ID（4个tab，每个20条）
+    # Step 1: 收集排行榜专辑ID（tab=2 是百合广播剧榜，多页抓取获取全部）
+    # 之前每tab只取20条导致只获53条，现在多页抓取获取全部约317条
     for tab in [2, 3, 4, 5]:
-        try:
-            result_data = _fanjiao_get("/walkman/api/ranking/album", {
-                "tab": tab, "time_type": 4, "page": 1, "size": 20,
-            })
-            if result_data.get("code") != 0 or not result_data.get("data"):
-                log.info("饭角排行榜 tab=%d: 无数据", tab)
+        for page in range(1, 10):  # 最多抓取9页
+            try:
+                result_data = _fanjiao_get("/walkman/api/ranking/album", {
+                    "tab": tab, "time_type": 4, "page": page, "size": 100,
+                })
+                if result_data.get("code") != 0 or not result_data.get("data"):
+                    log.info("饭角排行榜 tab=%d page=%d: 无数据，停止该tab", tab, page)
+                    break
+                albums = result_data["data"].get("list", []) or []
+                if not albums:
+                    log.info("饭角排行榜 tab=%d page=%d: 空列表，停止该tab", tab, page)
+                    break
+                new_count = 0
+                for album in albums:
+                    album_id = album.get("album_id", 0)
+                    if not album_id:
+                        continue
+                    drama_id = f"fanjiao_{album_id}"
+                    if drama_id in seen_ids:
+                        continue
+                    seen_ids.add(drama_id)
+                    all_albums.append(album)
+                    new_count += 1
+                log.info("饭角排行榜 tab=%d page=%d: %d 条（新增 %d）", tab, page, len(albums), new_count)
                 time.sleep(REQUEST_DELAY)
-                continue
-            albums = result_data["data"].get("list", []) or []
-            for album in albums:
-                album_id = album.get("album_id", 0)
-                if not album_id:
-                    continue
-                drama_id = f"fanjiao_{album_id}"
-                if drama_id in seen_ids:
-                    continue
-                seen_ids.add(drama_id)
-                all_albums.append(album)
-            log.info("饭角排行榜 tab=%d: 收集 %d 条", tab, len(albums))
-            time.sleep(REQUEST_DELAY)
-        except Exception as e:
-            log.warning("饭角排行榜 tab=%d 失败: %s", tab, e)
+            except Exception as e:
+                log.warning("饭角排行榜 tab=%d page=%d 失败: %s", tab, page, e)
+                break
 
     log.info("饭角排行榜共收集 %d 个专辑（去重后），开始并发获取详情...", len(all_albums))
 
@@ -1139,6 +1201,9 @@ def fetch_fanjiao_dramas(result: CrawlResult | None = None) -> Iterable[Drama]:
         # 集数：从描述解析"共XX集"
         total_episodes = _parse_fanjiao_episodes(album_desc)
 
+        # 完结状态：从描述解析
+        is_completed = _parse_is_completed(description, total_episodes)
+
         return Drama(
             id=drama_id,
             title=name,
@@ -1152,6 +1217,7 @@ def fetch_fanjiao_dramas(result: CrawlResult | None = None) -> Iterable[Drama]:
             studio=studio,
             source_url=f"https://www.fanjiao.co/album/{album_id}",
             tags=tag_names,
+            is_completed=is_completed,
         )
 
     completed = 0
@@ -1360,12 +1426,25 @@ def upsert_dramas(client: SupabaseREST, dramas: list[Drama]) -> None:
             "director": d.director if d.director else None,
             "source_url": d.source_url if d.source_url else None,
             "tags": d.tags if d.tags else None,
+            "is_completed": d.is_completed,
         }
         for d in dramas
     ]
     log.info("upserting %d dramas...", len(payload))
-    result = client.upsert("dramas", payload)
-    log.info("dramas upsert OK, returned=%d", len(result))
+    try:
+        result = client.upsert("dramas", payload)
+        log.info("dramas upsert OK, returned=%d", len(result))
+    except Exception as e:
+        err_msg = str(e).lower()
+        # 如果 is_completed 列不存在，降级（移除该字段后重试）
+        if "is_completed" in err_msg and ("42703" in err_msg or "column" in err_msg or "pgrst204" in err_msg or "schema cache" in err_msg):
+            log.warning("is_completed 列不存在，降级（请在 Supabase SQL Editor 执行: ALTER TABLE dramas ADD COLUMN is_completed boolean DEFAULT false;）")
+            for item in payload:
+                item.pop("is_completed", None)
+            result = client.upsert("dramas", payload)
+            log.info("dramas upsert OK (降级模式), returned=%d", len(result))
+        else:
+            raise
 
 
 def upsert_cvs(client: SupabaseREST, cvs: list[Cv]) -> None:
@@ -1450,6 +1529,7 @@ def export_json(cr: CrawlResult) -> Path:
                 "director": d.director,
                 "source_url": d.source_url,
                 "tags": d.tags,
+                "is_completed": d.is_completed,
             }
             for d in cr.dramas
         ],
@@ -1504,12 +1584,17 @@ def main() -> int:
 
     if not args.skip_crawl:
         log.info("开始在线爬取...")
-        crawlers = [
-            (fetch_maoer_dramas, "猫耳FM"),
+        # 猫耳FM 已禁用：数据质量不佳（BL混入、作者/年份缺失），仅保留饭角数据源
+        # 如需恢复，设置环境变量 ENABLE_MAOER=1
+        enable_maoer = os.environ.get("ENABLE_MAOER", "").strip() in ("1", "true", "yes")
+        crawlers = []
+        if enable_maoer:
+            crawlers.append((fetch_maoer_dramas, "猫耳FM"))
+        crawlers.extend([
             (fetch_ximalaya_dramas, "喜马拉雅"),
             (fetch_lizhi_dramas, "荔枝FM"),
             (fetch_manbo_dramas, "漫播"),
-        ]
+        ])
         for fn, name in crawlers:
             try:
                 results = list(fn())
@@ -1527,10 +1612,11 @@ def main() -> int:
             log.warning("饭角 爬取异常: %s", e)
 
         # 对猫耳FM的数据补充详情（同时提取CV）
-        maoer_dramas = [d for d in cr.dramas if d.id.startswith("maoer_")]
-        if maoer_dramas:
-            log.info("补充猫耳FM详情 (%d 条)...", len(maoer_dramas))
-            cr.dramas = fetch_maoer_drama_details(cr.dramas, cr)
+        if enable_maoer:
+            maoer_dramas = [d for d in cr.dramas if d.id.startswith("maoer_")]
+            if maoer_dramas:
+                log.info("补充猫耳FM详情 (%d 条)...", len(maoer_dramas))
+                cr.dramas = fetch_maoer_drama_details(cr.dramas, cr)
 
         # 如果在线爬取全部失败，使用 curated 数据作为 fallback
         if not cr.dramas:

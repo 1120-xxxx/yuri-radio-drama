@@ -18,6 +18,7 @@ export interface Drama {
   director?: string;
   source_url?: string;
   tags?: string[];
+  is_completed?: boolean;
 }
 
 export interface Cv {

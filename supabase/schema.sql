@@ -18,9 +18,13 @@ create table if not exists public.dramas (
   director text,
   source_url text,
   tags text[] default '{}',
+  is_completed boolean default false,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- 如果表已存在，添加 is_completed 列（幂等操作）
+alter table public.dramas add column if not exists is_completed boolean default false;
 
 -- ==================== CV 信息表 ====================
 create table if not exists public.cvs (

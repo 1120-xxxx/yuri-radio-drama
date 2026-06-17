@@ -9,7 +9,7 @@ import { getStatsOverview, getRankings } from '../lib/data';
 const stats = await getStatsOverview();
 const topPlay = (await getRankings('play_count')).slice(0, 10);
 const topRating = (await getRankings('rating_avg')).slice(0, 10);
-const topCv = (await getRankings('cv_roles')).slice(0, 10);
+const topCv = (await getRankings('cv_main_roles')).slice(0, 10);
 ---
 
 <BaseLayout title="首页 · 百合广播剧数据站">

@@ -104,9 +104,11 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         if (el) el.classList.toggle('hidden');
       });
     </script>
-    <script>
-      import { inject } from '@vercel/analytics';
-      inject();
-    </script>
+    {import.meta.env.PROD && import.meta.env.VERCEL && (
+      <script>
+        import { inject } from '@vercel/analytics';
+        inject();
+      </script>
+    )}
   </body>
 </html>

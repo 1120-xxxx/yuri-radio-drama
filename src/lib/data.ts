@@ -141,7 +141,7 @@ export async function getCvRoles(cvId: string): Promise<DramaCvRole[]> {
   return SAMPLE_ROLES.filter((r) => r.cv_id === cvId);
 }
 
-export type RankingMetric = 'play_count' | 'rating_avg' | 'rating_count' | 'cv_roles' | 'author_adaptation';
+export type RankingMetric = 'play_count' | 'rating_avg' | 'rating_count' | 'cv_roles' | 'cv_main_roles' | 'author_adaptation';
 
 export interface RankingItem {
   id: string;
@@ -171,11 +171,16 @@ async function getAllRoles(): Promise<DramaCvRole[]> {
 
 export async function getRankings(metric: RankingMetric): Promise<RankingItem[]> {
   const dramas = await getAllDramas();
-  if (metric === 'cv_roles') {
+  if (metric === 'cv_roles' || metric === 'cv_main_roles') {
     const cvs = await getAllCvs();
     const roles = await getAllRoles();
     const counts = new Map<string, number>();
-    for (const r of roles) counts.set(r.cv_id, (counts.get(r.cv_id) ?? 0) + 1);
+    // cv_main_roles 只统计主役（role_type === 'main'），cv_roles 统计所有角色
+    const filterMain = metric === 'cv_main_roles';
+    for (const r of roles) {
+      if (filterMain && r.role_type !== 'main') continue;
+      counts.set(r.cv_id, (counts.get(r.cv_id) ?? 0) + 1);
+    }
     return cvs
       .map((cv) => ({
         id: cv.id,

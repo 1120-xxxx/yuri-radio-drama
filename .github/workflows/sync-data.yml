@@ -24,12 +24,59 @@ jobs:
       - name: Install dependencies
         run: pip install -r scripts/requirements.txt
 
-      - name: Run crawler (export JSON + write Supabase)
+      - name: Run crawler (--clear: 完全覆盖 Supabase + 百合过滤 + 写入 JSON)
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          # 兼容两种变量名：爬虫优先读取 SUPABASE_URL，回退到 PUBLIC_SUPABASE_URL
+          SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
+          PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
-        run: python scripts/crawler_main.py --verbose
+        run: python scripts/crawler_main.py --clear --verbose
+
+      - name: Verify data quality (百合过滤 + 字段完整率)
+        env:
+          SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
+          PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python - <<'PYEOF'
+          import os, sys, requests, json
+          url = os.environ.get("SUPABASE_URL") or os.environ.get("PUBLIC_SUPABASE_URL")
+          key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+          headers = {'apikey': key, 'Authorization': f'Bearer {key}'}
+
+          resp = requests.get(f'{url}/rest/v1/dramas?select=id,title,platform,year,original_work,cover_url,description,tags', headers=headers)
+          dramas = resp.json()
+          total = len(dramas)
+          if total == 0:
+              print('❌ 验证失败：Supabase 无数据')
+              sys.exit(1)
+
+          # 百合过滤检查
+          STRONG_BL = ['耽美广播剧', '纯爱耽美', '现代耽美', '古风耽美', 'bl广播剧', '耽美与百合']
+          bl_found = []
+          for d in dramas:
+              text = f"{d['title']} {d.get('description') or ''} {' '.join(d.get('tags') or [])}".lower()
+              for kw in STRONG_BL:
+                  if kw.lower() in text:
+                      bl_found.append((d['id'], d['title'], kw))
+                      break
+          if bl_found:
+              print(f'❌ 验证失败：发现 {len(bl_found)} 条 BL 内容')
+              for id, title, kw in bl_found[:5]:
+                  print(f'  [{id}] {title} (matched: {kw})')
+              sys.exit(1)
+
+          # 字段完整率
+          has_year = sum(1 for d in dramas if d['year'] and d['year'] > 0)
+          has_author = sum(1 for d in dramas if d['original_work'])
+          has_cover = sum(1 for d in dramas if d['cover_url'])
+          print(f'✅ 验证通过：{total} 条 dramas')
+          print(f'  年份: {has_year}/{total} ({has_year*100//total}%)')
+          print(f'  作者: {has_author}/{total} ({has_author*100//total}%)')
+          print(f'  封面: {has_cover}/{total} ({has_cover*100//total}%)')
+          print(f'  BL 内容: 0 条 ✓')
+          PYEOF
 
       - name: Check for changes
         id: changes
