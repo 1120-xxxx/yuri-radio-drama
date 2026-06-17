@@ -29,7 +29,7 @@ const variantGradients: Record<string, [string, string]> = {
 function render() {
   if (!el.value || safeItems.value.length === 0) return;
   if (!chart) chart = echarts.init(el.value);
-  const sorted = [...safeItems.value].slice(0, 15).reverse();
+  const sorted = [...safeItems.value].slice(0, 20).reverse();
   const grad = variantGradients[props.variant ?? 'brand'];
   const prefix = props.linkPrefix ?? '/dramas/';
 

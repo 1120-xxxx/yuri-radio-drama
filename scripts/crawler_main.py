@@ -27,6 +27,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("pipeline")
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# 加载 .env 文件中的环境变量（本地运行时需要）
+try:
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env")
+except ImportError:
+    # python-dotenv 未安装时手动解析 .env 文件
+    _env_file = ROOT / ".env"
+    if _env_file.exists():
+        for _line in _env_file.read_text(encoding="utf-8").splitlines():
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                _k, _v = _k.strip(), _v.strip().strip('"').strip("'")
+                if _k and _k not in os.environ:
+                    os.environ[_k] = _v
 ALIASES_FILE = ROOT / "scripts" / "aliases.json"
 
 REQUEST_DELAY = 0.3  # 爬取请求间隔（秒）- 降低以提升速度（并发场景下已有限流）
@@ -136,6 +152,43 @@ class SupabaseREST:
             # 其他错误（如空表返回 200 但 RLS 限制）可能仍表示表存在
             log.warning("表检查 '%s' 返回异常: %s", table, e)
             return True  # 假设表存在，让后续 upsert 报具体错误
+
+    def delete_all(self, table: str, filter_column: str = "id") -> int:
+        """删除表中的所有数据（通过 PostgREST DELETE + 过滤器）
+        返回删除的行数（近似值）。
+        注意：需要 service_role key 绕过 RLS。
+        filter_column: 用于 DELETE 过滤的列名（PostgREST DELETE 需要至少一个过滤器）
+        """
+        # 先统计现有行数
+        count_resp = requests.get(
+            self._url(table),
+            headers={**self.headers, "Prefer": "count=exact", "Range": "0-0"},
+            timeout=15,
+        )
+        existing = 0
+        if count_resp.status_code == 200:
+            cr = count_resp.headers.get("content-range", "")
+            # 格式: 0-0/123
+            if "/" in cr:
+                try:
+                    existing = int(cr.split("/")[-1])
+                except ValueError:
+                    pass
+        log.info("DELETE %s (现有 ~%d 行)", self._url(table), existing)
+        # PostgREST DELETE 需要至少一个过滤器才能删除（防止误删）
+        # 使用 filter_column.gte.0 匹配所有行（service_role 可绕过 RLS）
+        # 对于 text 列使用 not.is.null 过滤
+        resp = requests.delete(
+            self._url(table),
+            headers=self.headers,
+            params={filter_column: "not.is.null"},
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            log.error("Supabase delete_all 失败 [%s]: status=%d body=%s", table, resp.status_code, resp.text[:300])
+            resp.raise_for_status()
+        log.info("DELETE %s 完成 (已清空)", table)
+        return existing
 
 
 # ---------------------------------------------------------------------------
@@ -338,13 +391,26 @@ def _fetch_single_maoer_detail(d: Drama, result: CrawlResult) -> Drama | None:
         existing_tags = d.tags or []
         d.tags = list(set(existing_tags + tag_names))
 
-        # 补充年份（从created_at字段提取）
+        # 补充封面（先补充封面，后面年份提取需要用到封面URL中的日期路径）
+        if not d.cover_url:
+            cover = drama_info.get("cover", "") or drama_info.get("cover_base", "")
+            if cover:
+                d.cover_url = f"https://static.maoercdn.com/dramacovers/{cover}" if not cover.startswith("http") else cover
+
+        # 补充年份（从created_at字段提取，或从封面URL路径提取如 /202109/）
         created_at = drama_info.get("created_at", "")
         if created_at and len(created_at) >= 4:
             try:
                 d.year = int(created_at[:4])
             except ValueError:
                 pass
+        # 如果 created_at 没有，从封面 URL 提取年份（猫耳 CDN 路径含 /YYYYMM/）
+        if not d.year and d.cover_url:
+            m_year = _re.search(r"/(\d{4})(\d{2})/", d.cover_url)
+            if m_year:
+                y = int(m_year.group(1))
+                if 2015 <= y <= 2026:
+                    d.year = y
 
         # 补充播放量（详情接口更准确）
         d.play_count = drama_info.get("view_count", d.play_count) or d.play_count
@@ -354,21 +420,20 @@ def _fetch_single_maoer_detail(d: Drama, result: CrawlResult) -> Drama | None:
         if episodes:
             d.total_episodes = len([e for e in episodes if e.get("type", 0) == 0])
 
-        # 补充原作作者
+        # 补充原作作者（优先用 API 字段，其次从描述解析"原著：XXX"或"XXX原著"）
         if not d.original_work:
             d.original_work = drama_info.get("author", "") or None
+        if not d.original_work and d.description:
+            d.original_work = _parse_fanjiao_author(d.description)
 
         # 补充描述（如果还没有）
         if not d.description:
             abstract = drama_info.get("abstract", "") or drama_info.get("catalog", "")
             if abstract:
                 d.description = _strip_html(abstract)[:500]
-
-        # 补充封面
-        if not d.cover_url:
-            cover = drama_info.get("cover", "")
-            if cover:
-                d.cover_url = f"https://static.maoercdn.com/dramacovers/{cover}" if not cover.startswith("http") else cover
+        # 有描述后再次尝试解析作者（描述可能刚被补充）
+        if not d.original_work and d.description:
+            d.original_work = _parse_fanjiao_author(d.description)
 
         # 补充工作室
         if not d.studio:
@@ -698,6 +763,10 @@ _FANJIAO_ROLE_KEYWORDS = {
 # 原著作者匹配: "原著：晋江文学城，鱼宰" / "原著：鱼宰" / "XXX原著" / "原著：XXX（晋江）"
 _FANJIAO_AUTHOR = _re.compile(r"(?:原著|原作)\s*[:：]\s*(?:[^，,，\s]*[，,])?\s*([^\s@，,（(]+)")
 _FANJIAO_AUTHOR_ALT = _re.compile(r"([\u4e00-\u9fa5]{2,12})原著")
+# 猫耳描述中常见的作者模式：英文/中文名 + 原著，或 @用户名 原著
+_MAOER_AUTHOR_ALT = _re.compile(r"@?([\u4e00-\u9fa5A-Za-z0-9_]{2,20})\s*原著")
+# 作者名后的边界词（截断用）
+_AUTHOR_BOUNDARY = _re.compile(r"(现代|古风|民国|全一期|全两期|全三期|全四期|广播剧|原创|出品|制作|《|策划|编剧|导演|STAFF|Cast|CAST|staff|cast|发布|完结|连载|第一季|第二季|第三季|第四季|第一季|预告|正剧|番外)")
 
 # 制作方匹配: "制作：极乎工作室" / "出品：八号疯球"
 _FANJIAO_STUDIO = _re.compile(r"(?:制作|出品)\s*[:：]\s*([^\s@，,（(]+(?:工作室|文化|传媒|出品|工作室)?)")
@@ -812,19 +881,38 @@ def _parse_fanjiao_author(desc: str) -> str | None:
                  "话本小说", "话本", "书旗小说", "书旗", "连城读书", "连城",
                  "汤圆创作", "汤圆", "SF轻小说", "轻小说", "豆瓣阅读",
                  "17K小说网", "17K", "纵横中文网", "纵横", "3G书城", "3G"]
+    # 截断作者名中的边界词（如"现代广播剧"等）
+    def _truncate_author(author: str) -> str:
+        m = _AUTHOR_BOUNDARY.search(author)
+        if m:
+            author = author[:m.start()].strip()
+        return author.strip("，,。.·：:")
+
     # 先匹配 "原著：XXX，作者名" 或 "原著：作者名"
     m = _FANJIAO_AUTHOR.search(desc)
     if m:
         author = m.group(1).strip().rstrip("，,。.")
+        author = _truncate_author(author)
         for platform in platforms:
             if author.startswith(platform):
                 author = author[len(platform):].strip("，,。.·")
         if 2 <= len(author) <= 15:
             return author
-    # 再匹配 "XXX原著" (如 "鱼宰原著" 或 "晋江文学城鱼宰原著")
+    # 再匹配 "XXX原著" (如 "鱼宰原著" 或 "晋江文学城鱼宰原著")，支持英文和@前缀
+    m = _MAOER_AUTHOR_ALT.search(desc)
+    if m:
+        author = m.group(1).strip()
+        author = _truncate_author(author)
+        for platform in platforms:
+            if author.startswith(platform):
+                author = author[len(platform):].strip("，,。.·")
+        if 2 <= len(author) <= 15 and author not in ("本剧", "正剧", "原著", "原作", "原创", "个人"):
+            return author
+    # 兼容旧的中文名匹配
     m = _FANJIAO_AUTHOR_ALT.search(desc)
     if m:
         author = m.group(1).strip()
+        author = _truncate_author(author)
         for platform in platforms:
             if author.startswith(platform):
                 author = author[len(platform):].strip("，,。.·")
@@ -1393,6 +1481,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="百合广播剧数据流水线")
     parser.add_argument("--dry-run", action="store_true", help="只打印不写入")
     parser.add_argument("--skip-crawl", action="store_true", help="跳过在线爬取，仅使用手动数据")
+    parser.add_argument("--clear", action="store_true", help="写入前清空 Supabase 所有表数据（完全覆盖）")
     parser.add_argument("--verbose", "-v", action="store_true", help="详细输出")
     args = parser.parse_args()
 
@@ -1401,7 +1490,7 @@ def main() -> int:
     if _verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    url = os.environ.get("SUPABASE_URL", "").strip()
+    url = os.environ.get("SUPABASE_URL", "").strip() or os.environ.get("PUBLIC_SUPABASE_URL", "").strip()
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 
     aliases = load_aliases()
@@ -1499,6 +1588,15 @@ def main() -> int:
             unique_roles.append(r)
     cr.roles = unique_roles
 
+    # 过滤掉引用不存在 drama_id 或 cv_id 的 roles（避免外键约束冲突）
+    valid_drama_ids = {d.id for d in cr.dramas}
+    valid_cv_ids = {c.id for c in cr.cvs}
+    before_role_filter = len(cr.roles)
+    cr.roles = [r for r in cr.roles if r.drama_id in valid_drama_ids and r.cv_id in valid_cv_ids]
+    if before_role_filter != len(cr.roles):
+        log.info("Role 外键过滤: %d -> %d (移除 %d 条引用不存在记录的 role)",
+                 before_role_filter, len(cr.roles), before_role_filter - len(cr.roles))
+
     log.info("数据汇总: dramas=%d, cvs=%d, roles=%d", len(cr.dramas), len(cr.cvs), len(cr.roles))
 
     if args.dry_run:
@@ -1540,6 +1638,16 @@ def main() -> int:
 
     # 写入数据到 Supabase
     log.info("开始写入 Supabase...")
+    if args.clear:
+        log.info("=== --clear 模式：清空所有表数据 ===")
+        # 先删 roles（外键依赖 cvs 和 dramas），再删 cvs 和 dramas
+        # drama_cv_roles 表没有 id 列，用 drama_id 作为过滤列
+        for table, col in [("drama_cv_roles", "drama_id"), ("cvs", "id"), ("dramas", "id")]:
+            try:
+                client.delete_all(table, filter_column=col)
+            except Exception as e:
+                log.warning("清空表 %s 失败（可能为空）: %s", table, e)
+        log.info("所有表已清空，开始写入新数据")
     upsert_dramas(client, cr.dramas)
     upsert_cvs(client, cr.cvs)
     upsert_roles(client, cr.roles)
