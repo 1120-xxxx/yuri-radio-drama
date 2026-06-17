@@ -277,11 +277,19 @@ def _strip_html(text: str | None) -> str:
 YURI_KEYWORDS = {"百合", "GL", "橘气", "橘向", "girls love", "girls' love", "girl's love",
                  "女生向", "女性向恋爱", "百合向", "GL向", "橘"}
 # BL/非百合关键词（包含这些词则排除）
-BL_KEYWORDS = {"耽美", "BL", "纯爱", "男男", "同志", "攻×受", "攻受", "男生向",
-               "腐", "兄贵", "男频", "bg向", "BG向", "言情向"}
+# 注意："纯爱"在百合作品中也很常见，不作为单独的 BL 判定依据
+BL_KEYWORDS = {"耽美", "BL", "男男", "同志", "攻×受", "攻受", "男生向",
+               "腐", "兄贵", "男频", "bg向", "BG向", "言情向",
+               "攻x受", "攻X受", "攻×受", "年下攻", "年上受", "强攻", "弱受",
+               "腹黑攻", "傲娇受", "冷酷攻", "温柔受", "霸道攻", "诱受"}
 # 强 BL 信号：明确标注为耽美/BL 作品（即使描述中同时出现"百合"也应排除）
+# 注意："纯爱广播剧"在百合作品中也可能出现，不作为强 BL 信号
 STRONG_BL_KEYWORDS = {"耽美广播剧", "纯爱耽美", "现代耽美", "古风耽美", "BL广播剧",
-                      "耽美与百合", "BL\\BG", "BL/BG", "BL\\GL", "BL/GL"}
+                      "耽美与百合", "BL\\BG", "BL/BG", "BL\\GL", "BL/GL",
+                      "耽美向", "BL向", "男男恋爱"}
+# BL 攻受模式正则：匹配 "XX攻" "XX受" 这类 BL 特有的角色描述
+import re as _bl_re
+_BL_ROLE_PATTERN = _bl_re.compile(r"[\u4e00-\u9fa5]{1,6}(攻|受)(?![到])")
 
 
 def is_yuri_content(title: str, description: str | None = None, tags: list[str] | None = None) -> bool:
@@ -289,9 +297,10 @@ def is_yuri_content(title: str, description: str | None = None, tags: list[str] 
 
     判断优先级：
     1. 强 BL 信号（如"耽美广播剧"）→ 直接排除
-    2. BL 关键词（如"耽美"）→ 排除（即使含百合也排除，避免误判）
-    3. 百合关键词 → 通过
-    4. 都没有 → 保守排除
+    2. BL 关键词（如"耽美"、"攻x受"）→ 排除（即使含百合也排除，避免误判）
+    3. BL 攻受模式（如"年下沉稳攻x年上清冷受"）→ 排除
+    4. 百合关键词 → 通过
+    5. 都没有 → 保守排除
     """
     text = f"{title} {description or ''} {' '.join(tags or [])}".lower()
 
@@ -306,10 +315,19 @@ def is_yuri_content(title: str, description: str | None = None, tags: list[str] 
     # 2. BL 关键词优先于百合关键词（避免"耽美与百合"这类混合内容误判）
     if has_bl:
         return False
-    # 3. 百合关键词通过
+
+    # 3. 检测 BL 攻受模式（如"年下沉稳攻x年上清冷受"）
+    # 使用原始文本（不转小写，因为中文不受影响）
+    original_text = f"{title} {description or ''} {' '.join(tags or [])}"
+    if _BL_ROLE_PATTERN.search(original_text):
+        # 进一步检查：如果同时出现"攻"和"受"，且不是百合常见的"接受/受到"等词
+        if "攻" in original_text and "受" in original_text:
+            return False
+
+    # 4. 百合关键词通过
     if has_yuri:
         return True
-    # 4. 两者都没有，保守排除
+    # 5. 两者都没有，保守排除
     return False
 
 
@@ -1204,6 +1222,14 @@ def fetch_fanjiao_dramas(result: CrawlResult | None = None) -> Iterable[Drama]:
         # 完结状态：从描述解析
         is_completed = _parse_is_completed(description, total_episodes)
 
+        # 饭角平台全部为百合/GL题材，数据全部可用，跳过百合过滤
+        # （仅排除明显非百合的标签作为安全兜底，如纯BL标签）
+        strong_bl_only = any(kw in (name + " " + description)
+                             for kw in ["耽美广播剧", "BL广播剧", "男男广播剧"])
+        if strong_bl_only:
+            log.debug("饭角 album_id=%s (%s) 明确为BL内容，跳过", album_id, name)
+            return None
+
         return Drama(
             id=drama_id,
             title=name,
@@ -1502,13 +1528,17 @@ def trigger_vercel_deploy() -> None:
         log.warning("触发 Vercel 重建失败（不影响数据同步）: %s", e)
 
 
-def export_json(cr: CrawlResult) -> Path:
+def export_json(cr: CrawlResult, review_mode: bool = False) -> Path:
     """将爬取的数据导出为 JSON 文件，供网站构建时直接读取。
     这是数据同步到网站的核心机制：JSON 提交到仓库 → Vercel 检测到 push 自动重建。
+
+    Args:
+        review_mode: 如果为 True，导出到 pending-review.json（审核模式）；
+                     如果为 False，导出到 latest.json（直接上线模式）
     """
     data_dir = ROOT / "src" / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    out = data_dir / "latest.json"
+    out = data_dir / ("pending-review.json" if review_mode else "latest.json")
 
     payload = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1549,9 +1579,100 @@ def export_json(cr: CrawlResult) -> Path:
     }
 
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    log.info("JSON 数据已导出: %s (dramas=%d, cvs=%d, roles=%d)",
-             out, len(cr.dramas), len(cr.cvs), len(cr.roles))
+    target = "审核文件" if review_mode else "JSON 数据"
+    log.info("%s已导出: %s (dramas=%d, cvs=%d, roles=%d)",
+             target, out, len(cr.dramas), len(cr.cvs), len(cr.roles))
     return out
+
+
+def review_pending_data() -> bool:
+    """审核 pending-review.json 的数据质量。
+    审核通过后，将其复制为 latest.json 并返回 True。
+    审核失败则返回 False。
+
+    审核内容：
+    1. 百合/GL 题材验证（排除 BL 内容）
+    2. 字段完整性检查（年份、作者、封面）
+    3. 数据量合理性检查
+    """
+    data_dir = ROOT / "src" / "data"
+    pending = data_dir / "pending-review.json"
+    if not pending.exists():
+        log.error("审核文件不存在: %s", pending)
+        return False
+
+    with open(pending, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    dramas = data.get("dramas", [])
+    cvs = data.get("cvs", [])
+    roles = data.get("roles", []) or data.get("drama_cv_roles", [])
+
+    log.info("=== 数据审核开始 ===")
+    log.info("待审核数据: dramas=%d, cvs=%d, roles=%d", len(dramas), len(cvs), len(roles))
+
+    # 1. 数据量检查
+    if len(dramas) < 10:
+        log.error("审核失败：广播剧数量过少 (%d < 10)", len(dramas))
+        return False
+    if len(cvs) < 5:
+        log.error("审核失败：CV数量过少 (%d < 5)", len(cvs))
+        return False
+
+    # 2. 百合/GL 题材验证
+    # 饭角平台全部为百合题材，数据全部可用，跳过百合验证
+    # 仅对非饭角平台（如猫耳FM）执行严格的百合题材验证
+    bl_found = []
+    for d in dramas:
+        platform = d.get("platform", "")
+        if platform == "饭角":
+            continue  # 饭角平台全部为百合题材，跳过验证
+        title = d.get("title", "")
+        desc = d.get("description", "") or ""
+        tags = d.get("tags", []) or []
+        if not is_yuri_content(title, desc, tags):
+            bl_found.append((d.get("id", ""), title))
+
+    if bl_found:
+        log.error("审核失败：发现 %d 条非百合内容", len(bl_found))
+        for did, title in bl_found[:10]:
+            log.error("  [%s] %s", did, title)
+        return False
+    log.info("百合/GL 题材验证通过 ✓ (饭角平台数据已跳过验证)")
+
+    # 3. 字段完整性检查
+    has_year = sum(1 for d in dramas if d.get("year") and d["year"] > 0)
+    has_author = sum(1 for d in dramas if d.get("original_work"))
+    has_cover = sum(1 for d in dramas if d.get("cover_url"))
+    has_play = sum(1 for d in dramas if d.get("play_count", 0) > 0)
+
+    year_pct = has_year * 100 // len(dramas)
+    author_pct = has_author * 100 // len(dramas)
+    cover_pct = has_cover * 100 // len(dramas)
+    play_pct = has_play * 100 // len(dramas)
+
+    log.info("字段完整性: 年份=%d%%, 作者=%d%%, 封面=%d%%, 播放量=%d%%",
+             year_pct, author_pct, cover_pct, play_pct)
+
+    # 4. 完结状态检查
+    has_completed = sum(1 for d in dramas if d.get("is_completed") is not None)
+    log.info("完结状态: %d/%d 已标记", has_completed, len(dramas))
+
+    # 5. CV 角色完整性检查
+    main_roles = sum(1 for r in roles if r.get("role_type") == "main")
+    support_roles = sum(1 for r in roles if r.get("role_type") == "support")
+    director_roles = sum(1 for r in roles if r.get("role_type") == "director")
+    log.info("角色分布: 主役=%d, 协役=%d, 导演=%d", main_roles, support_roles, director_roles)
+
+    if main_roles == 0:
+        log.warning("审核警告：无主役角色数据（CV参演榜将无法生成）")
+
+    # 审核通过，复制为 latest.json
+    latest = data_dir / "latest.json"
+    import shutil
+    shutil.copy2(pending, latest)
+    log.info("=== 审核通过，已更新 latest.json ===")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1563,12 +1684,51 @@ def main() -> int:
     parser.add_argument("--skip-crawl", action="store_true", help="跳过在线爬取，仅使用手动数据")
     parser.add_argument("--clear", action="store_true", help="写入前清空 Supabase 所有表数据（完全覆盖）")
     parser.add_argument("--verbose", "-v", action="store_true", help="详细输出")
+    parser.add_argument("--review", action="store_true",
+                        help="审核模式：爬取后导出到 pending-review.json，不写入 latest.json/Supabase")
+    parser.add_argument("--apply-review", action="store_true",
+                        help="应用审核：审核 pending-review.json 通过后，写入 latest.json 和 Supabase")
     args = parser.parse_args()
 
     global _verbose
     _verbose = args.verbose
     if _verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    # --apply-review 模式：只审核 pending-review.json，不重新爬取
+    if args.apply_review:
+        log.info("=== 应用审核模式 ===")
+        if not review_pending_data():
+            log.error("审核失败，未更新数据")
+            return 1
+
+        # 审核通过后，写入 Supabase
+        url = os.environ.get("SUPABASE_URL", "").strip() or os.environ.get("PUBLIC_SUPABASE_URL", "").strip()
+        service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+        if url and service_key:
+            # 从 latest.json 读取数据写入 Supabase
+            data_dir = ROOT / "src" / "data"
+            with open(data_dir / "latest.json", "r", encoding="utf-8") as f:
+                data = json.load(f)
+            cr_apply = CrawlResult()
+            cr_apply.dramas = [Drama(**d) for d in data.get("dramas", [])]
+            cr_apply.cvs = [Cv(**c) for c in data.get("cvs", [])]
+            roles_data = data.get("roles", []) or data.get("drama_cv_roles", [])
+            cr_apply.roles = [Role(**r) for r in roles_data]
+
+            client = SupabaseREST(url, service_key)
+            if args.clear:
+                for table, col in [("drama_cv_roles", "drama_id"), ("cvs", "id"), ("dramas", "id")]:
+                    try:
+                        client.delete_all(table, filter_column=col)
+                    except Exception as e:
+                        log.warning("清空表 %s 失败: %s", table, e)
+            upsert_dramas(client, cr_apply.dramas)
+            upsert_cvs(client, cr_apply.cvs)
+            upsert_roles(client, cr_apply.roles)
+            log.info("Supabase 写入完成 ✓")
+            trigger_vercel_deploy()
+        return 0
 
     url = os.environ.get("SUPABASE_URL", "").strip() or os.environ.get("PUBLIC_SUPABASE_URL", "").strip()
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
@@ -1693,7 +1853,16 @@ def main() -> int:
         ))
         return 0
 
-    # 导出 JSON 数据文件（网站构建时直接读取，不依赖 Supabase 环境变量）
+    # 导出 JSON 数据文件
+    # --review 模式：导出到 pending-review.json，不写入 latest.json/Supabase
+    # 普通模式：直接导出到 latest.json
+    if args.review:
+        export_json(cr, review_mode=True)
+        log.info("=== 审核模式：数据已导出到 pending-review.json ===")
+        log.info("请运行 'python scripts/crawler_main.py --apply-review' 审核并应用数据")
+        return 0
+
+    # 非 review 模式：导出到 latest.json
     export_json(cr)
 
     # 写入 Supabase（如果配置了凭据）

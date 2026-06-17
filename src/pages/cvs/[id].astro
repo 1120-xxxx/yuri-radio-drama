@@ -55,7 +55,8 @@ function fmt(n: number) { return n >= 10000 ? `${(n / 10000).toFixed(1)} 万` : 
       )}
       <h1 class="text-xl font-bold text-text">{cv.name}</h1>
       {cv.bio && <p class="text-sm text-text-muted mt-2">{cv.bio}</p>}
-      <div class="grid grid-cols-3 gap-2 mt-5 pt-5 border-t border-border">
+      <div class="grid grid-cols-4 gap-2 mt-5 pt-5 border-t border-border">
+        <div><div class="text-xs text-text-muted">总参演</div><div class="text-lg font-bold bg-gradient-to-r from-brand-400 to-accent-400 bg-clip-text text-transparent">{withTitles.length}</div></div>
         <div><div class="text-xs text-text-muted">主役</div><div class="text-lg font-bold bg-gradient-to-r from-brand-400 to-accent-400 bg-clip-text text-transparent">{mainList.length}</div></div>
         <div><div class="text-xs text-text-muted">协役</div><div class="text-lg font-bold text-text-soft">{supportList.length}</div></div>
         <div><div class="text-xs text-text-muted">导演</div><div class="text-lg font-bold bg-gradient-to-r from-accent-400 to-cyanx-400 bg-clip-text text-transparent">{directorList.length}</div></div>
