@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -28,8 +29,46 @@ log = logging.getLogger("pipeline")
 ROOT = Path(__file__).resolve().parent.parent
 ALIASES_FILE = ROOT / "scripts" / "aliases.json"
 
-REQUEST_DELAY = 1.5  # 爬取请求间隔（秒）
+REQUEST_DELAY = 0.3  # 爬取请求间隔（秒）- 降低以提升速度（并发场景下已有限流）
+MAX_WORKERS = 8  # 并发线程数（用于详情/分页并发获取，提升饭角专辑详情获取速度）
+MAX_RETRIES = 3  # HTTP请求最大重试次数
 _verbose = False  # 全局 verbose 标志
+
+# 全局 Session（连接池复用，减少 TCP 握手开销，提升并发性能）
+_SESSION: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    """获取全局 requests.Session（连接池复用）"""
+    global _SESSION
+    if _SESSION is None:
+        _SESSION = requests.Session()
+        # 配置连接池大小，适配并发场景
+        adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20)
+        _SESSION.mount("https://", adapter)
+        _SESSION.mount("http://", adapter)
+    return _SESSION
+
+
+def _request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
+    """带重试的HTTP请求，遇到网络错误自动退避重试
+    使用全局 Session 复用连接池，提升并发性能。
+    """
+    kwargs.setdefault("timeout", 15)
+    session = _get_session()
+    last_exc: Exception | None = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = session.request(method, url, **kwargs)
+            resp.raise_for_status()
+            return resp
+        except (requests.RequestException, ConnectionError) as e:
+            last_exc = e
+            if attempt < MAX_RETRIES - 1:
+                wait = 0.5 * (attempt + 1)
+                log.debug("请求失败(第%d次): %s，%.1fs后重试", attempt + 1, e, wait)
+                time.sleep(wait)
+    raise last_exc  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -238,17 +277,17 @@ def _parse_maoer_search_item(item: dict) -> Drama | None:
 def fetch_maoer_dramas() -> Iterable[Drama]:
     """爬取猫耳FM百合/GL标签下的中文广播剧元数据"""
     # 使用精确的百合搜索关键词，避免抓到BL/耽美内容
-    keywords = ["百合广播剧", "GL广播剧", "百合向广播剧", "橘气广播剧", "橘向广播剧"]
+    keywords = ["百合广播剧", "GL广播剧", "百合向广播剧", "橘气广播剧", "橘向广播剧",
+                "女生向广播剧", "百合向", "GL向", "橘气", "百合"]
     seen_ids: set[str] = set()
 
     for kw in keywords:
         page = 1
-        while page <= 3:  # 每个关键词最多3页
+        while page <= 5:  # 每个关键词最多5页（扩大覆盖）
             try:
                 params = {"s": kw, "type": 1, "page": page}
-                resp = requests.get(MAOER_SEARCH_URL, params=params, timeout=15,
-                                    headers=MAOER_HEADERS)
-                resp.raise_for_status()
+                resp = _request_with_retry("GET", MAOER_SEARCH_URL, params=params,
+                                           headers=MAOER_HEADERS)
                 data = resp.json()
 
                 if not data.get("success"):
@@ -278,108 +317,123 @@ def fetch_maoer_dramas() -> Iterable[Drama]:
                 break
 
 
+def _fetch_single_maoer_detail(d: Drama, result: CrawlResult) -> Drama | None:
+    """获取单个猫耳FM剧集详情，返回Drama（如被过滤返回None）"""
+    if not d.id.startswith("maoer_"):
+        return d
+    maoer_id = d.id.replace("maoer_", "")
+    try:
+        resp = _request_with_retry("GET", MAOER_DETAIL_URL, params={"drama_id": maoer_id},
+                                   headers=MAOER_HEADERS)
+        data = resp.json()
+        if not data.get("success"):
+            return d
+
+        info = data.get("info", {})
+        drama_info = info.get("drama", {})
+
+        # 补充标签
+        tags_raw = drama_info.get("tags", [])
+        tag_names = [t.get("name", "") for t in tags_raw if t.get("name")]
+        existing_tags = d.tags or []
+        d.tags = list(set(existing_tags + tag_names))
+
+        # 补充年份（从created_at字段提取）
+        created_at = drama_info.get("created_at", "")
+        if created_at and len(created_at) >= 4:
+            try:
+                d.year = int(created_at[:4])
+            except ValueError:
+                pass
+
+        # 补充播放量（详情接口更准确）
+        d.play_count = drama_info.get("view_count", d.play_count) or d.play_count
+
+        # 补充集数
+        episodes = info.get("episodes", {}).get("episode", [])
+        if episodes:
+            d.total_episodes = len([e for e in episodes if e.get("type", 0) == 0])
+
+        # 补充原作作者
+        if not d.original_work:
+            d.original_work = drama_info.get("author", "") or None
+
+        # 补充描述（如果还没有）
+        if not d.description:
+            abstract = drama_info.get("abstract", "") or drama_info.get("catalog", "")
+            if abstract:
+                d.description = _strip_html(abstract)[:500]
+
+        # 补充封面
+        if not d.cover_url:
+            cover = drama_info.get("cover", "")
+            if cover:
+                d.cover_url = f"https://static.maoercdn.com/dramacovers/{cover}" if not cover.startswith("http") else cover
+
+        # 补充工作室
+        if not d.studio:
+            d.studio = drama_info.get("organization", "") or drama_info.get("studio", "") or None
+
+        # 补充导演（策划/导演字段）
+        if not d.director:
+            d.director = drama_info.get("director", "") or drama_info.get("planner", "") or None
+
+        # 百合内容二次验证：用详情API的完整信息再次过滤
+        if not is_yuri_content(d.title, d.description, d.tags):
+            log.debug("猫耳FM %s (%s) 非百合内容，跳过", maoer_id, d.title)
+            return None
+
+        # 提取CV信息
+        cv_list = info.get("cvs", [])
+        if isinstance(cv_list, list):
+            for cv_item in cv_list:
+                cv_info = cv_item.get("cv_info", {})
+                cv_id_raw = str(cv_info.get("id", ""))
+                cv_name = cv_info.get("name", "").strip()
+                if not cv_id_raw or not cv_name:
+                    continue
+                cv_id = f"maoer_cv_{cv_id_raw}"
+                result.cvs.append(Cv(id=cv_id, name=cv_name))
+                char_name = cv_item.get("character", "") or None
+                role_type = "main"
+                result.roles.append(Role(
+                    drama_id=d.id,
+                    cv_id=cv_id,
+                    role_type=role_type,
+                    character_name=char_name,
+                ))
+
+        return d
+
+    except Exception as e:
+        log.warning("猫耳FM详情 %s 失败: %s", maoer_id, e)
+        return d
+
+
 def fetch_maoer_drama_details(dramas: list[Drama], result: CrawlResult) -> list[Drama]:
-    """对猫耳FM的Drama列表补充详情（标签、年份、CV信息等），同时填充 result.cvs 和 result.roles"""
-    updated = []
-    for d in dramas:
-        if not d.id.startswith("maoer_"):
-            updated.append(d)
-            continue
-        maoer_id = d.id.replace("maoer_", "")
-        try:
-            resp = requests.get(MAOER_DETAIL_URL, params={"drama_id": maoer_id},
-                                timeout=15, headers=MAOER_HEADERS)
-            resp.raise_for_status()
-            data = resp.json()
-            if not data.get("success"):
-                updated.append(d)
-                time.sleep(REQUEST_DELAY)
-                continue
+    """对猫耳FM的Drama列表补充详情（标签、年份、CV信息等），并发获取以提升速度"""
+    maoer_dramas = [d for d in dramas if d.id.startswith("maoer_")]
+    other_dramas = [d for d in dramas if not d.id.startswith("maoer_")]
 
-            info = data.get("info", {})
-            drama_info = info.get("drama", {})
+    updated: list[Drama] = list(other_dramas)
+    completed = 0
+    total = len(maoer_dramas)
 
-            # 补充标签
-            tags_raw = drama_info.get("tags", [])
-            tag_names = [t.get("name", "") for t in tags_raw if t.get("name")]
-            existing_tags = d.tags or []
-            d.tags = list(set(existing_tags + tag_names))
-
-            # 补充年份（从created_at字段提取）
-            created_at = drama_info.get("created_at", "")
-            if created_at and len(created_at) >= 4:
-                try:
-                    d.year = int(created_at[:4])
-                except ValueError:
-                    pass
-
-            # 补充播放量（详情接口更准确）
-            d.play_count = drama_info.get("view_count", d.play_count) or d.play_count
-
-            # 补充集数
-            episodes = info.get("episodes", {}).get("episode", [])
-            if episodes:
-                d.total_episodes = len([e for e in episodes if e.get("type", 0) == 0])
-
-            # 补充原作作者
-            if not d.original_work:
-                d.original_work = drama_info.get("author", "") or None
-
-            # 补充描述（如果还没有）
-            if not d.description:
-                abstract = drama_info.get("abstract", "") or drama_info.get("catalog", "")
-                if abstract:
-                    d.description = _strip_html(abstract)[:500]
-
-            # 补充封面
-            if not d.cover_url:
-                cover = drama_info.get("cover", "")
-                if cover:
-                    d.cover_url = f"https://static.maoercdn.com/dramacovers/{cover}" if not cover.startswith("http") else cover
-
-            # 补充工作室
-            if not d.studio:
-                d.studio = drama_info.get("organization", "") or drama_info.get("studio", "") or None
-
-            # 补充导演（策划/导演字段）
-            if not d.director:
-                d.director = drama_info.get("director", "") or drama_info.get("planner", "") or None
-
-            # 百合内容二次验证：用详情API的完整信息再次过滤
-            if not is_yuri_content(d.title, d.description, d.tags):
-                log.debug("猫耳FM %s (%s) 非百合内容，跳过", maoer_id, d.title)
-                time.sleep(REQUEST_DELAY)
-                continue  # 不加入 updated，相当于过滤掉
-
-            # 提取CV信息
-            # 猫耳FM详情API返回的CV信息在 info['cvs'] 中，结构: {character, cv_info: {id, name}}
-            cv_list = info.get("cvs", [])
-            if isinstance(cv_list, list):
-                for cv_item in cv_list:
-                    cv_info = cv_item.get("cv_info", {})
-                    cv_id_raw = str(cv_info.get("id", ""))
-                    cv_name = cv_info.get("name", "").strip()
-                    if not cv_id_raw or not cv_name:
-                        continue
-                    cv_id = f"maoer_cv_{cv_id_raw}"
-                    # 添加CV
-                    result.cvs.append(Cv(id=cv_id, name=cv_name))
-                    # 添加角色关联
-                    char_name = cv_item.get("character", "") or None
-                    role_type = "main"  # 猫耳FM不区分主配，默认为主役
-                    result.roles.append(Role(
-                        drama_id=d.id,
-                        cv_id=cv_id,
-                        role_type=role_type,
-                        character_name=char_name,
-                    ))
-
-            updated.append(d)
-            time.sleep(REQUEST_DELAY)
-
-        except Exception as e:
-            log.warning("猫耳FM详情 %s 失败: %s", maoer_id, e)
-            updated.append(d)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_drama = {
+            executor.submit(_fetch_single_maoer_detail, d, result): d
+            for d in maoer_dramas
+        }
+        for future in as_completed(future_to_drama):
+            completed += 1
+            try:
+                result_d = future.result()
+                if result_d is not None:
+                    updated.append(result_d)
+                if completed % 10 == 0 or completed == total:
+                    log.info("猫耳FM详情进度: %d/%d", completed, total)
+            except Exception as e:
+                log.warning("猫耳FM详情获取异常: %s", e)
 
     return updated
 
@@ -592,8 +646,9 @@ def fetch_manbo_dramas() -> Iterable[Drama]:
 # ---------------------------------------------------------------------------
 # 饭角API: https://api.fanjiao.co
 # 签名算法: MD5(sorted("key=value").join("&") + SECRET)
-# 排行榜: /walkman/api/ranking/album?tab=2&time_type=4&page=1&size=20
-# 音频列表: /walkman/api/audio/list?album_id=XXX
+# 排行榜:   /walkman/api/ranking/album?tab=2&time_type=4&page=1&size=20
+# 专辑详情: /walkman/api/album/album_info?album_id=XXX&from=H5
+# 参演CV:   /walkman/api/album/actor_cvs?album_id=XXX  (返回 cv_list 含真实头像)
 # ---------------------------------------------------------------------------
 import hashlib as _hashlib
 
@@ -607,7 +662,9 @@ FANJIAO_HEADERS = {
 
 
 def _fanjiao_sign(params: dict) -> str:
-    """饭角API签名: MD5(sorted("k=v").join("&") + SECRET)"""
+    """饭角API签名: MD5(sorted("k=v").join("&") + SECRET)
+    API 服务端会对参数排序后校验签名，因此客户端必须对参数排序后签名。
+    """
     pairs = [f"{k}={v}" for k, v in params.items()]
     pairs.sort()
     raw = "&".join(pairs) + FANJIAO_SECRET
@@ -615,12 +672,11 @@ def _fanjiao_sign(params: dict) -> str:
 
 
 def _fanjiao_get(path: str, params: dict) -> dict:
-    """调用饭角API"""
+    """调用饭角API（带重试）"""
     sig = _fanjiao_sign(params)
     url = f"{FANJIAO_BASE}{path}"
     headers = {**FANJIAO_HEADERS, "signature": sig}
-    resp = requests.get(url, params=params, headers=headers, timeout=15)
-    resp.raise_for_status()
+    resp = _request_with_retry("GET", url, params=params, headers=headers)
     return resp.json()
 
 
@@ -639,18 +695,18 @@ _FANJIAO_ROLE_KEYWORDS = {
     "主持": "support", "出品": "director", "制作": "director",
 }
 
-# 原著作者匹配: "原著：晋江文学城，鱼宰" / "原著：鱼宰" / "XXX原著"
+# 原著作者匹配: "原著：晋江文学城，鱼宰" / "原著：鱼宰" / "XXX原著" / "原著：XXX（晋江）"
 _FANJIAO_AUTHOR = _re.compile(r"(?:原著|原作)\s*[:：]\s*(?:[^，,，\s]*[，,])?\s*([^\s@，,（(]+)")
 _FANJIAO_AUTHOR_ALT = _re.compile(r"([\u4e00-\u9fa5]{2,12})原著")
 
 # 制作方匹配: "制作：极乎工作室" / "出品：八号疯球"
 _FANJIAO_STUDIO = _re.compile(r"(?:制作|出品)\s*[:：]\s*([^\s@，,（(]+(?:工作室|文化|传媒|出品|工作室)?)")
 
-# 集数匹配: "正剧共19集" / "本剧共19集" / "共XX集"
-_FANJIAO_EPISODES = _re.compile(r"(?:正剧|本剧)?共?\s*(\d{1,3})\s*集")
+# 集数匹配: "正剧共19集" / "本剧共19集" / "共XX集" / "全XX期" / "全XX集"
+_FANJIAO_EPISODES = _re.compile(r"(?:正剧|本剧)?共?\s*(\d{1,3})\s*集|全\s*(\d{1,3})\s*(?:期|集)")
 
-# 年份匹配: "2024年" / "2024.08" / 从日期提取
-_FANJIAO_YEAR = _re.compile(r"(20\d{2})\s*年")
+# 年份匹配: "2024年" / "2024.08" / "2024-08-30" / "2024/08/30"
+_FANJIAO_YEAR = _re.compile(r"(20\d{2})(?:\s*年|[.\-/年]\s*\d{1,2})?")
 
 
 def _parse_fanjiao_cvs_from_description(desc: str) -> list[tuple[str, str, str]]:
@@ -750,9 +806,12 @@ def _parse_fanjiao_author(desc: str) -> str | None:
     """从描述中提取原作作者名"""
     if not desc:
         return None
-    # 平台名列表（用于去除前缀）
+    # 平台名列表（用于去除前缀，扩展更多平台）
     platforms = ["晋江文学城", "晋江文学城", "晋江", "长佩文学", "长佩", "番茄小说",
-                 "起点中文网", "起点", "知乎", "豆瓣", "Lofter", "LOFTER", "豆腐阅读"]
+                 "起点中文网", "起点", "知乎", "豆瓣", "Lofter", "LOFTER", "豆腐阅读",
+                 "话本小说", "话本", "书旗小说", "书旗", "连城读书", "连城",
+                 "汤圆创作", "汤圆", "SF轻小说", "轻小说", "豆瓣阅读",
+                 "17K小说网", "17K", "纵横中文网", "纵横", "3G书城", "3G"]
     # 先匹配 "原著：XXX，作者名" 或 "原著：作者名"
     m = _FANJIAO_AUTHOR.search(desc)
     if m:
@@ -801,7 +860,8 @@ def _parse_fanjiao_episodes(desc: str) -> int:
         return 0
     m = _FANJIAO_EPISODES.search(desc)
     if m:
-        return int(m.group(1))
+        # 支持两个捕获组："共XX集"（group 1）和"全XX期"（group 2）
+        return int(m.group(1) or m.group(2) or 0)
     return 0
 
 
@@ -822,190 +882,204 @@ def _parse_fanjiao_year(desc: str, publish_date: str | None = None) -> int:
 
 
 def _cv_avatar_url(cv_name: str) -> str:
-    """为CV生成确定性头像URL（饭角公开API不返回CV头像，使用DiceBear生成）"""
+    """为CV生成确定性头像URL（兜底：当饭角API未返回头像时使用 DiceBear 生成）"""
     import urllib.parse
     seed = urllib.parse.quote(cv_name)
     return f"https://api.dicebear.com/7.x/initials/svg?seed={seed}&backgroundColor=ffd5dc,c9b6ff,b6c6ff"
 
 
+def _fetch_fanjiao_album_detail(album_id: int, drama_id: str, result: CrawlResult | None) -> tuple[dict, list[dict]]:
+    """并发获取单个专辑的详情和CV列表
+    返回 (album_info_data, cv_list)
+    album_info_data: album_info API 返回的 data 字段（含 author_name/cover/play/publish_date 等）
+    cv_list: actor_cvs API 返回的 cv_list（含真实头像 avatar、cv_type 1=主役 2=协役）
+    """
+    info_data: dict = {}
+    cv_list: list[dict] = []
+
+    def _fetch_info() -> None:
+        nonlocal info_data
+        try:
+            r = _fanjiao_get("/walkman/api/album/album_info", {"album_id": album_id, "from": "H5"})
+            if r.get("code") == 0 and r.get("data"):
+                info_data = r["data"]
+        except Exception as e:
+            log.debug("饭角 album_info album_id=%s 失败: %s", album_id, e)
+
+    def _fetch_cvs() -> None:
+        nonlocal cv_list
+        try:
+            r = _fanjiao_get("/walkman/api/album/actor_cvs", {"album_id": album_id})
+            if r.get("code") == 0 and r.get("data"):
+                cv_list = r["data"].get("cv_list", []) or []
+        except Exception as e:
+            log.debug("饭角 actor_cvs album_id=%s 失败: %s", album_id, e)
+
+    # 并发获取详情和CV列表（2个请求并发）
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(_fetch_info)
+        f2 = executor.submit(_fetch_cvs)
+        f1.result()
+        f2.result()
+
+    # 将CV信息写入 result（使用真实头像）
+    if result is not None and cv_list:
+        for cv_item in cv_list:
+            cv_id_raw = cv_item.get("cv_id", 0)
+            cv_name = (cv_item.get("name") or "").strip()
+            if not cv_id_raw or not cv_name:
+                continue
+            cv_id = f"fanjiao_cv_{cv_id_raw}"
+            avatar = cv_item.get("avatar") or ""
+            # 规范化头像域名（fanjiao.cn → fanjiao.co）
+            if avatar and "fanjiao.cn" in avatar:
+                avatar = avatar.replace("fanjiao.cn", "fanjiao.co")
+            role_name = cv_item.get("role_name") or None
+            # cv_type: 1=主役, 2=协役
+            cv_type = cv_item.get("cv_type", 1)
+            role_type = "main" if cv_type == 1 else "support"
+            result.cvs.append(Cv(
+                id=cv_id,
+                name=cv_name,
+                avatar_url=avatar or _cv_avatar_url(cv_name),
+            ))
+            result.roles.append(Role(
+                drama_id=drama_id,
+                cv_id=cv_id,
+                role_type=role_type,
+                character_name=role_name,
+            ))
+
+    return info_data, cv_list
+
+
 def fetch_fanjiao_dramas(result: CrawlResult | None = None) -> Iterable[Drama]:
-    """爬取饭角广播剧排行榜元数据
-    通过排行榜API获取热门专辑，再通过音频列表API补充：
-    - 集数（paging.total + 描述中"共XX集"）
-    - 播放量（所有音频播放量之和）
-    - 年份（首条音频publish_date）
-    - CV信息（从音频描述的"配音组"区块解析角色-CV映射）
-    - 原作作者（从描述中"原著：XXX"解析）
-    - 制作方（从描述中"制作：XXX"解析）
+    """爬取饭角广播剧排行榜元数据（优化版）
+    流程：
+    1. 通过排行榜API获取热门专辑列表（tab=2,3,4,5 各取 size=20）
+    2. 对每个专辑并发调用 album_info + actor_cvs 两个API：
+       - album_info: 准确获取 author_name/cover/publish_date/play/up_name/tags
+       - actor_cvs: 获取 CV 真实头像、角色名、cv_type(主役/协役)
+    3. 集数从描述中"共XX集"解析，播放量优先用 album_info.play
+    优化点：
+    - 用 album_info API 直接获取结构化字段（作者/封面/年份/制作方），不再依赖正则解析描述
+    - 用 actor_cvs API 获取真实CV头像，不再使用 DiceBear 兜底
+    - 多专辑详情并发获取（MAX_WORKERS 线程），大幅提升速度
     """
     seen_ids: set[str] = set()
+    all_albums: list[dict] = []  # 从排行榜收集的专辑（去重）
 
-    # tab=2,3,4,5 对应不同排行榜分类，time_type=4 为总榜
+    # Step 1: 收集排行榜专辑ID（4个tab，每个20条）
     for tab in [2, 3, 4, 5]:
         try:
             result_data = _fanjiao_get("/walkman/api/ranking/album", {
                 "tab": tab, "time_type": 4, "page": 1, "size": 20,
             })
-
             if result_data.get("code") != 0 or not result_data.get("data"):
                 log.info("饭角排行榜 tab=%d: 无数据", tab)
                 time.sleep(REQUEST_DELAY)
                 continue
-
-            albums = result_data["data"].get("list", [])
-            count = 0
-
+            albums = result_data["data"].get("list", []) or []
             for album in albums:
                 album_id = album.get("album_id", 0)
-                name = album.get("name", "").strip()
-                if not album_id or not name:
+                if not album_id:
                     continue
-
                 drama_id = f"fanjiao_{album_id}"
                 if drama_id in seen_ids:
                     continue
                 seen_ids.add(drama_id)
-
-                album_desc = album.get("description", "") or ""
-                description = _strip_html(album_desc)[:500] if album_desc else None
-
-                # 封面
-                cover_url = album.get("cover", "") or album.get("square", "") or None
-
-                # 从专辑描述提取作者/制作方/集数/年份
-                original_work = _parse_fanjiao_author(album_desc)
-                studio = _parse_fanjiao_studio(album_desc)
-                desc_episodes = _parse_fanjiao_episodes(album_desc)
-                year = _parse_fanjiao_year(album_desc)
-
-                # 获取音频列表以补充集数、播放量、年份、CV信息
-                total_play = int(album.get("play", 0) or 0)
-                total_episodes = desc_episodes
-                parsed_cvs: list[tuple[str, str, str]] = []  # (cv_name, role_type, char_name)
-                first_publish_date: str | None = None
-
-                try:
-                    # 获取所有音频（分页）
-                    all_audios: list[dict] = []
-                    page = 1
-                    while page <= 4:  # 最多4页=200条
-                        audio_result = _fanjiao_get("/walkman/api/audio/list", {
-                            "album_id": album_id, "page": page, "size": 50,
-                        })
-                        if audio_result.get("code") != 0 or not audio_result.get("data"):
-                            break
-                        audios = audio_result["data"].get("list", [])
-                        paging = audio_result["data"].get("paging", {})
-                        all_audios.extend(audios)
-                        if page == 1:
-                            first_publish_date = audios[0].get("publish_date") if audios else None
-                        total_play = sum(a.get("play", 0) for a in all_audios)
-                        if len(all_audios) >= paging.get("total", 0):
-                            break
-                        if not audios:
-                            break
-                        page += 1
-                        time.sleep(0.3)
-
-                    # 从paging.total获取集数（如果描述中没解析到）
-                    if not total_episodes and all_audios:
-                        paging_total = paging.get("total", len(all_audios))
-                        # paging.total包含花絮/访谈，估算正剧集数：名称含"第X期"的数量
-                        episode_count = sum(1 for a in all_audios if "期" in a.get("name", "") or "集" in a.get("name", ""))
-                        total_episodes = episode_count if episode_count > 0 else paging_total
-
-                    # 从首条音频发布日期提取年份
-                    if not year and first_publish_date:
-                        year = _parse_fanjiao_year("", first_publish_date)
-
-                    # 从音频描述解析CV信息（优先正剧/角色语音）
-                    parsed_cvs = []
-                    seen_cv_chars: set[tuple[str, str]] = set()
-                    # 优先解析"角色语音"类音频（CV信息最清晰）
-                    for audio in all_audios:
-                        audio_name = audio.get("name", "")
-                        audio_desc = audio.get("description", "") or ""
-                        if "角色语音" in audio_name or "角色曲" in audio_name or "第一期" in audio_name or "配音组" in audio_desc:
-                            cvs = _parse_fanjiao_cvs_from_description(audio_desc)
-                            for cv_name, role_type, char_name in cvs:
-                                key = (cv_name, char_name or "")
-                                if key not in seen_cv_chars:
-                                    seen_cv_chars.add(key)
-                                    parsed_cvs.append((cv_name, role_type, char_name))
-                        if len(parsed_cvs) >= 8:
-                            break
-
-                    # 如果角色语音没解析到，从所有音频描述解析
-                    if not parsed_cvs:
-                        for audio in all_audios[:10]:
-                            audio_desc = audio.get("description", "") or ""
-                            cvs = _parse_fanjiao_cvs_from_description(audio_desc)
-                            for cv_name, role_type, char_name in cvs:
-                                key = (cv_name, char_name or "")
-                                if key not in seen_cv_chars:
-                                    seen_cv_chars.add(key)
-                                    parsed_cvs.append((cv_name, role_type, char_name))
-                            if len(parsed_cvs) >= 5:
-                                break
-
-                    # 从音频描述补充作者信息（如果专辑描述没解析到）
-                    if not original_work and all_audios:
-                        for audio in all_audios[:5]:
-                            audio_desc = audio.get("description", "") or ""
-                            author = _parse_fanjiao_author(audio_desc)
-                            if author:
-                                original_work = author
-                                break
-
-                    # 从音频描述补充制作方
-                    if not studio and all_audios:
-                        for audio in all_audios[:5]:
-                            audio_desc = audio.get("description", "") or ""
-                            s = _parse_fanjiao_studio(audio_desc)
-                            if s:
-                                studio = s
-                                break
-
-                except Exception as e:
-                    log.debug("饭角音频列表 album_id=%s 失败: %s", album_id, e)
-
-                # 将CV信息写入result
-                if result is not None and parsed_cvs:
-                    for cv_name, role_type, char_name in parsed_cvs:
-                        cv_id = f"fanjiao_cv_{_hashlib.md5(cv_name.encode()).hexdigest()[:12]}"
-                        result.cvs.append(Cv(
-                            id=cv_id,
-                            name=cv_name,
-                            avatar_url=_cv_avatar_url(cv_name),
-                        ))
-                        result.roles.append(Role(
-                            drama_id=drama_id,
-                            cv_id=cv_id,
-                            role_type=role_type,
-                            character_name=char_name,
-                        ))
-
-                yield Drama(
-                    id=drama_id,
-                    title=name,
-                    original_work=original_work,
-                    platform="饭角",
-                    year=year,
-                    total_episodes=total_episodes,
-                    play_count=total_play,
-                    cover_url=cover_url,
-                    description=description,
-                    studio=studio,
-                    source_url=f"https://www.fanjiao.co/album/{album_id}",
-                    tags=["百合"],
-                )
-                count += 1
-                time.sleep(REQUEST_DELAY)
-
-            log.info("饭角排行榜 tab=%d: 获取 %d 条", tab, count)
-
+                all_albums.append(album)
+            log.info("饭角排行榜 tab=%d: 收集 %d 条", tab, len(albums))
+            time.sleep(REQUEST_DELAY)
         except Exception as e:
             log.warning("饭角排行榜 tab=%d 失败: %s", tab, e)
+
+    log.info("饭角排行榜共收集 %d 个专辑（去重后），开始并发获取详情...", len(all_albums))
+
+    # Step 2: 并发获取每个专辑的详情和CV列表
+    def _process_album(album: dict) -> Drama | None:
+        album_id = album.get("album_id", 0)
+        name = (album.get("name") or "").strip()
+        if not album_id or not name:
+            return None
+        drama_id = f"fanjiao_{album_id}"
+
+        # 排行榜接口已有字段：name/description/cover/up_name/play
+        album_desc = album.get("description", "") or ""
+        description = _strip_html(album_desc)[:500] if album_desc else None
+        cover_url = album.get("cover", "") or album.get("square", "") or None
+        studio = album.get("up_name", "") or None
+        play_count = int(album.get("play", 0) or 0)
+
+        # 调用 album_info + actor_cvs 获取结构化数据
+        info_data, cv_list = _fetch_fanjiao_album_detail(album_id, drama_id, result)
+
+        # 合并 album_info 的准确字段（优先级高于排行榜接口）
+        if info_data:
+            # 作者：album_info.author_name 是结构化字段，比正则解析更准确
+            author_name = (info_data.get("author_name") or "").strip()
+            if author_name:
+                original_work = author_name
+            else:
+                original_work = _parse_fanjiao_author(album_desc)
+            # 封面：优先用 album_info.cover
+            cover_url = info_data.get("cover") or cover_url
+            # 播放量：album_info.play 更准确
+            play_count = int(info_data.get("play", 0) or play_count)
+            # 制作方：album_info.up_name
+            studio = info_data.get("up_name") or studio
+            # 年份：从 publish_date 提取
+            publish_date = info_data.get("publish_date", "") or ""
+            year = _parse_fanjiao_year("", publish_date) if publish_date else _parse_fanjiao_year(album_desc)
+            # 标签：从 tags 结构化字段提取
+            tags_data = info_data.get("tags", {}) or {}
+            tag_names: list[str] = ["百合"]
+            for style_tag in (tags_data.get("style_tag") or []):
+                t = (style_tag.get("name") or "").strip()
+                if t and t not in tag_names:
+                    tag_names.append(t)
+            for content_tag in (tags_data.get("content_tag") or []):
+                t = (content_tag.get("name") or "").strip()
+                if t and t not in tag_names and t != original_work:
+                    tag_names.append(t)
+        else:
+            # album_info 失败时回退到正则解析
+            original_work = _parse_fanjiao_author(album_desc)
+            year = _parse_fanjiao_year(album_desc)
+            tag_names = ["百合"]
+
+        # 集数：从描述解析"共XX集"
+        total_episodes = _parse_fanjiao_episodes(album_desc)
+
+        return Drama(
+            id=drama_id,
+            title=name,
+            original_work=original_work,
+            platform="饭角",
+            year=year,
+            total_episodes=total_episodes,
+            play_count=play_count,
+            cover_url=cover_url,
+            description=description,
+            studio=studio,
+            source_url=f"https://www.fanjiao.co/album/{album_id}",
+            tags=tag_names,
+        )
+
+    completed = 0
+    total = len(all_albums)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(_process_album, a): a for a in all_albums}
+        for future in as_completed(futures):
+            completed += 1
+            try:
+                d = future.result()
+                if d is not None:
+                    yield d
+                if completed % 10 == 0 or completed == total:
+                    log.info("饭角详情进度: %d/%d", completed, total)
+            except Exception as e:
+                log.warning("饭角详情获取异常: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -1134,6 +1208,29 @@ def load_aliases() -> dict[str, str]:
 
 def normalize_name(name: str, aliases: dict[str, str]) -> str:
     return aliases.get(name.strip().lower(), name.strip())
+
+
+def filter_low_quality_dramas(dramas: Iterable[Drama]) -> list[Drama]:
+    """过滤低质量数据记录，确保数据库质量"""
+    out: list[Drama] = []
+    for d in dramas:
+        # 必须有标题
+        if not d.title or not d.title.strip():
+            continue
+        # 标题不能是纯数字或过短
+        title = d.title.strip()
+        if len(title) < 2:
+            continue
+        if title.isdigit():
+            continue
+        # 必须有平台信息
+        if not d.platform or d.platform == "未知":
+            continue
+        # 播放量必须大于0（过滤无效记录）
+        if d.play_count <= 0:
+            continue
+        out.append(d)
+    return out
 
 
 def dedupe(items: Iterable[Drama]) -> list[Drama]:
@@ -1311,9 +1408,10 @@ def main() -> int:
 
     # 收集数据
     cr = CrawlResult()
-    cr.dramas = list(fetch_curated_dramas())
-    cr.cvs = list(fetch_curated_cvs())
-    cr.roles = list(fetch_curated_roles())
+    # curated 数据改为仅作为 fallback（当在线爬取失败时才使用）
+    curated_dramas = list(fetch_curated_dramas())
+    curated_cvs = list(fetch_curated_cvs())
+    curated_roles = list(fetch_curated_roles())
 
     if not args.skip_crawl:
         log.info("开始在线爬取...")
@@ -1345,7 +1443,28 @@ def main() -> int:
             log.info("补充猫耳FM详情 (%d 条)...", len(maoer_dramas))
             cr.dramas = fetch_maoer_drama_details(cr.dramas, cr)
 
-    # 去重 + 归一化
+        # 如果在线爬取全部失败，使用 curated 数据作为 fallback
+        if not cr.dramas:
+            log.warning("在线爬取无数据，使用 curated 数据作为 fallback")
+            cr.dramas = curated_dramas
+            cr.cvs = curated_cvs
+            cr.roles = curated_roles
+        else:
+            # 合并 curated 数据中的CV和角色（补充在线爬取可能遗漏的）
+            cr.cvs.extend(curated_cvs)
+            cr.roles.extend(curated_roles)
+    else:
+        # skip_crawl 模式：直接使用 curated 数据
+        cr.dramas = curated_dramas
+        cr.cvs = curated_cvs
+        cr.roles = curated_roles
+
+    # 数据质量过滤 + 去重 + 归一化
+    before_filter = len(cr.dramas)
+    cr.dramas = filter_low_quality_dramas(cr.dramas)
+    if before_filter != len(cr.dramas):
+        log.info("数据质量过滤: %d -> %d (过滤 %d 条低质量记录)",
+                 before_filter, len(cr.dramas), before_filter - len(cr.dramas))
     cr.dramas = dedupe(cr.dramas)
 
     # CV去重（同名CV合并）
