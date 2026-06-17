@@ -73,7 +73,7 @@ export async function getCvById(id: string): Promise<Cv | undefined> {
 
 export async function getDramaRoles(dramaId: string): Promise<DramaCvRole[]> {
   if (HAS_LOCAL_DATA) {
-    const roles = latestData.roles as DramaCvRole[];
+    const roles = latestData.drama_cv_roles as DramaCvRole[];
     const cvs = latestData.cvs as Cv[];
     const cvNameMap = new Map(cvs.map((c) => [c.id, c.name]));
     return roles
@@ -105,7 +105,7 @@ export async function getDramaRoles(dramaId: string): Promise<DramaCvRole[]> {
 
 export async function getCvRoles(cvId: string): Promise<DramaCvRole[]> {
   if (HAS_LOCAL_DATA) {
-    const roles = latestData.roles as DramaCvRole[];
+    const roles = latestData.drama_cv_roles as DramaCvRole[];
     const dramas = latestData.dramas as unknown as Drama[];
     const dramaMap = new Map(dramas.map((d) => [d.id, d]));
     return roles
@@ -153,7 +153,7 @@ export interface RankingItem {
 
 async function getAllRoles(): Promise<DramaCvRole[]> {
   if (HAS_LOCAL_DATA) {
-    return latestData.roles as DramaCvRole[];
+    return latestData.drama_cv_roles as DramaCvRole[];
   }
   if (USE_SUPABASE) {
     try {
