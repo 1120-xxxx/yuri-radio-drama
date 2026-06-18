@@ -19,11 +19,11 @@ let chart: echarts.ECharts | null = null;
 const safeItems = computed(() => Array.isArray(props.items) ? props.items : []);
 
 const variantGradients: Record<string, [string, string]> = {
-  brand: ['#fda4af', '#f472b6'],
-  accent: ['#c4b5fd', '#818cf8'],
-  cyan: ['#67e8f9', '#06b6d4'],
-  gold: ['#fcd34d', '#f59e0b'],
-  emerald: ['#6ee7b7', '#10b981'],
+  brand: ['#ACEDFF', '#5D9FFF'],
+  accent: ['#6BBBFF', '#4A9EF0'],
+  cyan: ['#89BBFE', '#5D9FFF'],
+  gold: ['#FFD68A', '#FFC04E'],
+  emerald: ['#6BBBFF', '#5D9FFF'],
 };
 
 function render() {
@@ -37,20 +37,20 @@ function render() {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      backgroundColor: '#1a1a2e',
-      borderColor: '#2d2d44',
-      textStyle: { color: '#e5e7eb' },
+      backgroundColor: '#FFFFFF',
+      borderColor: '#89BBFE',
+      textStyle: { color: '#615D6C' },
       formatter: (p: any) => {
         const idx = p[0].dataIndex;
         const item = sorted[idx];
-        return `<span style="font-weight:600">${p[0].name}</span><br/>${p[0].value}${props.unit ?? ''}<br/><span style="color:#9ca3af;font-size:11px">点击查看详情 →</span>`;
+        return `<span style="font-weight:600">${p[0].name}</span><br/>${p[0].value}${props.unit ?? ''}<br/><span style="color:#6F8AB7;font-size:11px">点击查看详情 →</span>`;
       },
     },
     grid: { left: '3%', right: '8%', bottom: '8%', top: 10, containLabel: true },
     xAxis: {
       type: 'value',
       axisLabel: {
-        color: '#9ca3af',
+        color: '#6F8AB7',
         // 格式化：>=10000 显示为 x.xw，>=1000 显示为 xk
         formatter: (v: number) => {
           if (v >= 10000) {
@@ -69,7 +69,7 @@ function render() {
         hideOverlap: true,
         fontSize: 11,
       },
-      splitLine: { lineStyle: { color: '#2d2d44' } },
+      splitLine: { lineStyle: { color: '#ACEDFF' } },
     },
     yAxis: {
       type: 'category',
@@ -77,10 +77,10 @@ function render() {
       axisLabel: {
         width: 180,
         overflow: 'truncate',
-        color: '#c8cad0',
+        color: '#4A4658',
         fontSize: 12,
       },
-      axisLine: { lineStyle: { color: '#2d2d44' } },
+      axisLine: { lineStyle: { color: '#89BBFE' } },
       axisTick: { show: false },
       triggerEvent: true,
     },

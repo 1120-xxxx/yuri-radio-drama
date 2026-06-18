@@ -13,10 +13,10 @@ let chart: echarts.ECharts | null = null;
 const safeData = computed(() => (Array.isArray(props.data) ? props.data : []));
 
 const paletteMap: Record<string, [string, string]> = {
-  '猫耳FM': ['#fda4af', '#f472b6'],
-  '漫播': ['#c4b5fd', '#818cf8'],
-  '喜马拉雅': ['#fcd34d', '#f59e0b'],
-  'B站': ['#67e8f9', '#06b6d4'],
+  '猫耳FM': ['#ACEDFF', '#5D9FFF'],
+  '漫播': ['#6BBBFF', '#4A9EF0'],
+  '喜马拉雅': ['#FFD68A', '#FFC04E'],
+  'B站': ['#89BBFE', '#5D9FFF'],
 };
 
 function render() {
@@ -28,20 +28,20 @@ function render() {
       { offset: 0, color: grad[0] },
       { offset: 1, color: grad[1] },
     ]);
-    return '#818cf8';
+    return '#5D9FFF';
   });
   chart.setOption({
     tooltip: {
       trigger: 'item',
-      backgroundColor: '#1a1a2e',
-      borderColor: '#2d2d44',
-      textStyle: { color: '#e5e7eb' },
+      backgroundColor: '#FFFFFF',
+      borderColor: '#89BBFE',
+      textStyle: { color: '#615D6C' },
       formatter: '{b}: {c} ({d}%)',
     },
     legend: {
       bottom: 0,
       icon: 'circle',
-      textStyle: { color: '#9ca3af' },
+      textStyle: { color: '#6F8AB7' },
       itemWidth: 10,
       itemHeight: 10,
     },
@@ -54,24 +54,24 @@ function render() {
         avoidLabelOverlap: true,
         itemStyle: {
           borderRadius: 8,
-          borderColor: '#1e1e2f',
+          borderColor: '#FFFFFF',
           borderWidth: 3,
         },
         label: {
           show: true,
-          color: '#c8cad0',
+          color: '#4A4658',
           fontSize: 13,
           formatter: '{b}\n{d}%',
         },
         labelLine: {
-          lineStyle: { color: '#4b5563' },
+          lineStyle: { color: '#9BAECF' },
         },
         emphasis: {
           scale: true,
           scaleSize: 6,
           itemStyle: {
             shadowBlur: 20,
-            shadowColor: 'rgba(244, 114, 182, 0.3)',
+            shadowColor: 'rgba(93, 159, 255, 0.3)',
           },
         },
         data: safeData.value,

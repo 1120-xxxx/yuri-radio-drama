@@ -13,10 +13,10 @@ let chart: echarts.ECharts | null = null;
 const safeData = computed(() => (Array.isArray(props.data) ? props.data : []));
 
 const gradients: [string, string][] = [
-  ['#fda4af', '#f472b6'],
-  ['#c4b5fd', '#818cf8'],
-  ['#fcd34d', '#f59e0b'],
-  ['#67e8f9', '#06b6d4'],
+  ['#ACEDFF', '#5D9FFF'],
+  ['#6BBBFF', '#4A9EF0'],
+  ['#FFD68A', '#FFC04E'],
+  ['#89BBFE', '#5D9FFF'],
 ];
 
 function render() {
@@ -26,22 +26,22 @@ function render() {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      backgroundColor: '#1a1a2e',
-      borderColor: '#2d2d44',
-      textStyle: { color: '#e5e7eb' },
+      backgroundColor: '#FFFFFF',
+      borderColor: '#89BBFE',
+      textStyle: { color: '#615D6C' },
     },
     grid: { left: '3%', right: '4%', bottom: '3%', top: 30, containLabel: true },
     xAxis: {
       type: 'category',
       data: safeData.value.map((d) => d.name),
-      axisLabel: { color: '#9ca3af', interval: 0 },
-      axisLine: { lineStyle: { color: '#2d2d44' } },
+      axisLabel: { color: '#6F8AB7', interval: 0 },
+      axisLine: { lineStyle: { color: '#89BBFE' } },
       axisTick: { show: false },
     },
     yAxis: {
       type: 'value',
-      axisLabel: { color: '#9ca3af' },
-      splitLine: { lineStyle: { color: '#2d2d44' } },
+      axisLabel: { color: '#6F8AB7' },
+      splitLine: { lineStyle: { color: '#ACEDFF' } },
     },
     series: [
       {

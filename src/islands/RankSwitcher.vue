@@ -142,7 +142,7 @@ function rankBadge(idx: number): string {
           v-for="(item, idx) in current.items"
           :key="item.id"
           @click="openAuthorWorks(item)"
-          class="w-full flex items-center gap-4 p-3 rounded-xl border transition-all hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/10 hover:-translate-y-0.5 group text-left"
+          class="w-full flex items-center gap-4 p-3 rounded-xl border transition-all hover:border-brand-500/40 hover:shadow-lg hover:shadow-brand-500/10 hover:-translate-y-0.5 group text-left"
           :class="rankClass(idx)"
         >
           <div class="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm bg-gradient-to-br"
@@ -150,7 +150,7 @@ function rankBadge(idx: number): string {
             {{ idx + 1 }}
           </div>
           <div class="flex-1 min-w-0">
-            <div class="font-semibold text-text truncate group-hover:text-emerald-300 transition-colors">{{ item.title }}</div>
+            <div class="font-semibold text-text truncate group-hover:text-brand-300 transition-colors">{{ item.title }}</div>
             <div class="text-xs text-text-faint mt-0.5">原作作者</div>
           </div>
           <div class="text-right flex-shrink-0">
