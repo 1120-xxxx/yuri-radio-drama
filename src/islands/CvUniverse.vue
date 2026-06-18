@@ -99,23 +99,27 @@ function closeDetail() {
     <div v-if="selected" class="fixed inset-0 z-50 flex items-center justify-center p-4" @click.self="closeDetail">
       <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="closeDetail"></div>
       <div
-        class="relative bg-bg-card border border-border rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto p-6">
-        <button @click="closeDetail" class="absolute top-4 right-4 text-text-muted hover:text-text transition-colors">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-
-        <h3 class="text-xl font-bold text-text mb-1">
-          <a :href="`/cvs/${selected.cv1_id}/`" class="hover:text-brand-300 transition-colors">{{ selected.cv1_name
-            }}</a>
-          <span class="text-brand-400 mx-2">×</span>
-          <a :href="`/cvs/${selected.cv2_id}/`" class="hover:text-brand-300 transition-colors">{{ selected.cv2_name
-            }}</a>
-        </h3>
-        <p class="text-sm text-text-muted mb-5">合作 {{ selected.count }} 部作品</p>
-
-        <div class="space-y-2">
+        class="relative bg-bg-card border border-border rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] flex flex-col overflow-hidden">
+        <!-- 头部：固定不滚动，关闭按钮不被遮挡 -->
+        <div class="flex items-start justify-between p-6 pb-4 border-b border-border flex-shrink-0">
+          <div class="min-w-0 pr-8">
+            <h3 class="text-xl font-bold text-text mb-1">
+              <a :href="`/cvs/${selected.cv1_id}/`" class="hover:text-brand-300 transition-colors">{{ selected.cv1_name
+                }}</a>
+              <span class="text-brand-400 mx-2">×</span>
+              <a :href="`/cvs/${selected.cv2_id}/`" class="hover:text-brand-300 transition-colors">{{ selected.cv2_name
+                }}</a>
+            </h3>
+            <p class="text-sm text-text-muted">合作 {{ selected.count }} 部作品</p>
+          </div>
+          <button @click="closeDetail" class="flex-shrink-0 p-2 -mr-1 -mt-1 rounded-lg text-text-muted hover:text-text hover:bg-bg-darker transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <!-- 内容区：可滚动 -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-2">
           <div v-for="drama in selected.dramas" :key="drama.id"
             class="flex items-center gap-3 py-2.5 px-3 rounded-xl bg-bg-darker border border-border/60 hover:border-brand-500/30 transition-all">
             <span class="text-lg">🎙️</span>

@@ -16,6 +16,7 @@ export interface RatingComment {
 }
 
 const LS_KEY_PREFIX = 'yuri_rated_drama_';
+const LS_FINGERPRINT_KEY = 'yuri_device_fp';
 
 export function hasLocallyRated(dramaId: string): boolean {
   try {
@@ -30,6 +31,20 @@ function markLocallyRated(dramaId: string, score: number): void {
     localStorage.setItem(LS_KEY_PREFIX + dramaId, String(score));
   } catch {
     /* ignore */
+  }
+}
+
+// 稳定的设备指纹：首次生成后存入 localStorage，后续复用
+export function getDeviceFingerprint(): string {
+  try {
+    let fp = localStorage.getItem(LS_FINGERPRINT_KEY);
+    if (!fp) {
+      fp = 'fp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem(LS_FINGERPRINT_KEY, fp);
+    }
+    return fp;
+  } catch {
+    return 'fp_fallback_' + Date.now().toString(36);
   }
 }
 
@@ -108,21 +123,19 @@ export async function submitRating(payload: SubmitRatingPayload): Promise<{
   if (payload.comment && payload.comment.length > 200) {
     return { ok: false, message: '短评长度不得超过 200 字' };
   }
-  if (hasLocallyRated(payload.dramaId)) {
-    return { ok: false, message: '您已评分过该剧集' };
-  }
   const sb = getBrowserClient();
   if (!sb) {
-    // 未配置 Supabase：仅本地记录，不显示演示模式提示
-    markLocallyRated(payload.dramaId, payload.score);
-    return { ok: true, message: '感谢您的评分！' };
+    // Supabase 未配置：无法保存评分
+    return { ok: false, message: '评分服务未配置，无法保存评分' };
   }
+  // 使用稳定设备指纹，让数据库唯一约束防重复
+  const fingerprint = payload.deviceFingerprint || getDeviceFingerprint();
   const { error } = await sb.from('ratings').insert([{
     drama_id: payload.dramaId,
     score: payload.score,
     comment: payload.comment ?? null,
     ip_hash: 'browser_placeholder', // 真实 IP 由 Edge Function 写入
-    device_fingerprint: payload.deviceFingerprint ?? 'unknown',
+    device_fingerprint: fingerprint,
   }]);
   if (error) {
     // 23505 = unique violation — 防重复评分命中

@@ -4,6 +4,7 @@ import {
   getRatingForDrama,
   submitRating,
   hasLocallyRated,
+  getDeviceFingerprint,
   type RatingComment,
   type RatingSummary,
 } from '../lib/ratings';
@@ -67,7 +68,7 @@ async function handleSubmit() {
       dramaId: props.dramaId,
       score: score.value,
       comment: comment.value.trim(),
-      deviceFingerprint: String(Date.now()) + Math.random().toString(36).slice(2, 8),
+      deviceFingerprint: getDeviceFingerprint(),
     });
     message.value = res.message;
     if (res.ok) {
@@ -122,6 +123,9 @@ onUnmounted(() => {
 <template>
   <section class="card">
     <h3 class="text-lg font-bold mb-4 text-text">匿名评分与短评</h3>
+    <div v-if="!backendConnected" class="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-sm text-amber-300">
+      ⚠ 评分服务未连接，评分将无法保存。请稍后再试。
+    </div>
     <div class="flex flex-wrap items-start gap-6 mb-6">
       <div class="text-center px-6 py-4 rounded-2xl bg-bg-darker border border-border">
         <div class="text-xs text-text-muted mb-2">当前均分</div>

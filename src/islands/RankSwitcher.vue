@@ -163,38 +163,36 @@ function rankBadge(idx: number): string {
 
     <p v-else class="text-sm text-text-muted mt-4">暂无数据。</p>
 
-    <!-- 作者作品弹窗：Teleport 到 body 确保相对屏幕居中 -->
-    <Teleport to="body">
-      <div v-if="modalAuthor" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" @click.self="closeAuthorWorks">
-        <div class="bg-bg-card border border-border rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col">
-          <div class="flex items-center justify-between p-5 border-b border-border">
-            <div>
-              <h3 class="text-xl font-bold text-text">{{ modalAuthor.title }}</h3>
-              <p class="text-sm text-text-muted mt-1">原作作者 · 共 {{ modalAuthor.works?.length ?? 0 }} 部改编作品</p>
-            </div>
-            <button @click="closeAuthorWorks" class="p-2 rounded-lg hover:bg-bg-darker text-text-muted hover:text-text transition-colors" aria-label="关闭">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
+    <!-- 作者作品弹窗：fixed 定位相对视口居中 -->
+    <div v-if="modalAuthor" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" @click.self="closeAuthorWorks">
+      <div class="bg-bg-card border border-border rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+        <div class="flex items-center justify-between p-5 border-b border-border">
+          <div>
+            <h3 class="text-xl font-bold text-text">{{ modalAuthor.title }}</h3>
+            <p class="text-sm text-text-muted mt-1">原作作者 · 共 {{ modalAuthor.works?.length ?? 0 }} 部改编作品</p>
           </div>
-          <div class="flex-1 overflow-y-auto p-5 space-y-2">
-            <a
-              v-for="w in modalAuthor.works"
-              :key="w.id"
-              :href="`/dramas/${w.id}/`"
-              class="flex items-center justify-between gap-3 p-3 rounded-xl bg-bg-darker border border-border hover:border-brand-500/40 hover:bg-bg-soft transition-all group"
-            >
-              <div class="flex-1 min-w-0">
-                <div class="font-medium text-text truncate group-hover:text-brand-300 transition-colors">{{ w.title }}</div>
-                <div class="text-xs text-text-muted mt-0.5 flex items-center gap-2">
-                  <span v-if="w.platform" class="px-1.5 py-0.5 rounded bg-bg-soft/60 border border-border/40">{{ w.platform }}</span>
-                  <span v-if="w.year">{{ w.year }}</span>
-                </div>
+          <button @click="closeAuthorWorks" class="p-2 rounded-lg hover:bg-bg-darker text-text-muted hover:text-text transition-colors" aria-label="关闭">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-5 space-y-2">
+          <a
+            v-for="w in modalAuthor.works"
+            :key="w.id"
+            :href="`/dramas/${w.id}/`"
+            class="flex items-center justify-between gap-3 p-3 rounded-xl bg-bg-darker border border-border hover:border-brand-500/40 hover:bg-bg-soft transition-all group"
+          >
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-text truncate group-hover:text-brand-300 transition-colors">{{ w.title }}</div>
+              <div class="text-xs text-text-muted mt-0.5 flex items-center gap-2">
+                <span v-if="w.platform" class="px-1.5 py-0.5 rounded bg-bg-soft/60 border border-border/40">{{ w.platform }}</span>
+                <span v-if="w.year">{{ w.year }}</span>
               </div>
-              <div v-if="w.play_count" class="text-sm text-text-muted tabular-nums flex-shrink-0">{{ fmtPlay(w.play_count) }} 播放</div>
-            </a>
-          </div>
+            </div>
+            <div v-if="w.play_count" class="text-sm text-text-muted tabular-nums flex-shrink-0">{{ fmtPlay(w.play_count) }} 播放</div>
+          </a>
         </div>
       </div>
-    </Teleport>
+    </div>
   </div>
 </template>
