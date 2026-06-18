@@ -3,6 +3,8 @@ import vue from '@astrojs/vue';
 import unocss from '@unocss/astro';
 import { presetUno, presetAttributify, presetIcons } from 'unocss';
 
+import cloudflare from "@astrojs/cloudflare";
+
 export default defineConfig({
   integrations: [
     vue(),
@@ -83,8 +85,13 @@ export default defineConfig({
       },
     }),
   ],
+
   site: 'https://example.com',
+
   build: {
     inlineStylesheets: 'auto',
   },
+
+  output: "hybrid",
+  adapter: cloudflare()
 });
