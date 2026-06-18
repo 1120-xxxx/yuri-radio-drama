@@ -46,10 +46,29 @@ function render() {
         return `<span style="font-weight:600">${p[0].name}</span><br/>${p[0].value}${props.unit ?? ''}<br/><span style="color:#9ca3af;font-size:11px">点击查看详情 →</span>`;
       },
     },
-    grid: { left: '3%', right: '8%', bottom: '3%', top: 10, containLabel: true },
+    grid: { left: '3%', right: '8%', bottom: '8%', top: 10, containLabel: true },
     xAxis: {
       type: 'value',
-      axisLabel: { color: '#9ca3af' },
+      axisLabel: {
+        color: '#9ca3af',
+        // 格式化：>=10000 显示为 x.xw，>=1000 显示为 xk
+        formatter: (v: number) => {
+          if (v >= 10000) {
+            const w = v / 10000;
+            // 整数则不带小数
+            return (Number.isInteger(w) ? w.toFixed(0) : w.toFixed(1)) + 'w';
+          }
+          if (v >= 1000) {
+            const k = v / 1000;
+            return (Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)) + 'k';
+          }
+          return String(v);
+        },
+        // 防止标签互相重叠：限制标签数量
+        interval: 'auto',
+        hideOverlap: true,
+        fontSize: 11,
+      },
       splitLine: { lineStyle: { color: '#2d2d44' } },
     },
     yAxis: {

@@ -265,24 +265,30 @@ export async function getCvCollaborations(minCount = 2): Promise<CvCollaboration
   const dramaMap = new Map<string, { id: string; title: string; platform?: string }>();
   for (const d of dramas) dramaMap.set(d.id, { id: d.id, title: d.title, platform: d.platform });
 
-  // drama_id -> cv_id[] (按drama分组CV)
-  const dramaCvs = new Map<string, Set<string>>();
+  // drama_id -> { main: Set<cv_id>, support: Set<cv_id> }
+  // 按角色类型分组：只有两人同为主役或同为协役才算CP合作
+  const dramaCvByType = new Map<string, { main: Set<string>; support: Set<string> }>();
   for (const r of roles) {
-    if (!dramaCvs.has(r.drama_id)) dramaCvs.set(r.drama_id, new Set());
-    dramaCvs.get(r.drama_id)!.add(r.cv_id);
+    if (!dramaCvByType.has(r.drama_id)) dramaCvByType.set(r.drama_id, { main: new Set(), support: new Set() });
+    const group = dramaCvByType.get(r.drama_id)!;
+    if (r.role_type === 'main') group.main.add(r.cv_id);
+    else if (r.role_type === 'support') group.support.add(r.cv_id);
   }
 
-  // 统计CV对合作次数
+  // 统计CV对合作次数：同剧内两人角色类型相同（都主役或都协役）才算一次合作
   const pairMap = new Map<string, { cv1: string; cv2: string; dramaIds: Set<string> }>();
-  for (const [dramaId, cvSet] of dramaCvs) {
-    const cvList = Array.from(cvSet);
-    for (let i = 0; i < cvList.length; i++) {
-      for (let j = i + 1; j < cvList.length; j++) {
-        const a = cvList[i] < cvList[j] ? cvList[i] : cvList[j];
-        const b = cvList[i] < cvList[j] ? cvList[j] : cvList[i];
-        const key = `${a}|${b}`;
-        if (!pairMap.has(key)) pairMap.set(key, { cv1: a, cv2: b, dramaIds: new Set() });
-        pairMap.get(key)!.dramaIds.add(dramaId);
+  for (const [dramaId, group] of dramaCvByType) {
+    // 分别在主役组和协役组内两两配对
+    for (const cvSet of [group.main, group.support]) {
+      const cvList = Array.from(cvSet);
+      for (let i = 0; i < cvList.length; i++) {
+        for (let j = i + 1; j < cvList.length; j++) {
+          const a = cvList[i] < cvList[j] ? cvList[i] : cvList[j];
+          const b = cvList[i] < cvList[j] ? cvList[j] : cvList[i];
+          const key = `${a}|${b}`;
+          if (!pairMap.has(key)) pairMap.set(key, { cv1: a, cv2: b, dramaIds: new Set() });
+          pairMap.get(key)!.dramaIds.add(dramaId);
+        }
       }
     }
   }

@@ -10,6 +10,8 @@ interface DramaSummary {
   rating_avg: number;
   rating_count: number;
   tags?: string[];
+  cover_url?: string;
+  is_completed?: boolean;
 }
 
 const props = defineProps<{ dramas?: DramaSummary[] }>();
@@ -29,11 +31,16 @@ const safe = computed(() => (Array.isArray(props.dramas) ? props.dramas : []));
 const allPlatforms = computed(() => Array.from(new Set(safe.value.map((d) => d.platform))));
 const allYears = computed(() => Array.from(new Set(safe.value.map((d) => String(d.year)))).sort((a, b) => Number(b) - Number(a)));
 const allTags = computed(() => {
-  const set = new Set<string>();
+  // 统计每个标签的出现次数，只保留高频标签（>=2部剧使用），取前25个
+  const counts = new Map<string, number>();
   for (const d of safe.value) {
-    if (d.tags) for (const t of d.tags) set.add(t);
+    if (d.tags) for (const t of d.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
   }
-  return Array.from(set);
+  return Array.from(counts.entries())
+    .filter(([, c]) => c >= 2) // 至少2部剧使用
+    .sort((a, b) => b[1] - a[1]) // 按频次降序
+    .slice(0, 25) // 只展示前25个
+    .map(([t]) => t);
 });
 
 const filtered = computed(() => {
@@ -265,20 +272,28 @@ onBeforeUnmount(() => document.removeEventListener('click', closeDropdowns));
         v-for="d in filtered"
         :key="d.id"
         :href="`/dramas/${d.id}/`"
-        class="block p-5 rounded-2xl bg-bg-darker border border-border hover:border-brand-500/40 hover:shadow-xl hover:shadow-brand-500/10 hover:-translate-y-0.5 transition-all group"
+        class="block p-4 rounded-2xl bg-bg-darker border border-border hover:border-brand-500/40 hover:shadow-xl hover:shadow-brand-500/10 hover:-translate-y-0.5 transition-all group overflow-hidden"
       >
-        <div class="flex items-start justify-between gap-2 mb-2">
-          <div class="font-semibold text-text truncate group-hover:text-brand-300 transition-colors">{{ d.title }}</div>
+        <div class="flex gap-3">
+          <div class="flex-shrink-0 w-16 h-20 rounded-lg overflow-hidden bg-bg-soft border border-border/60">
+            <img v-if="d.cover_url" :src="d.cover_url" :alt="d.title" loading="lazy" referrerpolicy="no-referrer"
+              class="w-full h-full object-cover" />
+            <div v-else class="w-full h-full flex items-center justify-center text-2xl opacity-50">🎙️</div>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="font-semibold text-text truncate group-hover:text-brand-300 transition-colors mb-1">{{ d.title }}</div>
+            <div class="flex items-center gap-1.5 text-xs text-text-muted mb-2 flex-wrap">
+              <span class="px-1.5 py-0.5 rounded-md bg-bg-soft border border-border/60">{{ d.platform }}</span>
+              <span class="text-text-faint">·</span>
+              <span>{{ d.year }}</span>
+              <span v-if="d.is_completed" class="px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">已完结</span>
+            </div>
+            <div v-if="d.tags && d.tags.length" class="flex flex-wrap gap-1 mb-2">
+              <span v-for="t in d.tags.slice(0, 3)" :key="t" class="text-[10px] px-1.5 py-0.5 rounded bg-bg-soft/60 text-text-faint border border-border/40">{{ t }}</span>
+            </div>
+          </div>
         </div>
-        <div class="flex items-center gap-2 text-xs text-text-muted mb-3">
-          <span class="px-2 py-0.5 rounded-md bg-bg-soft border border-border/60">{{ d.platform }}</span>
-          <span class="text-text-faint">·</span>
-          <span>{{ d.year }}</span>
-        </div>
-        <div v-if="d.tags && d.tags.length" class="flex flex-wrap gap-1 mb-3">
-          <span v-for="t in d.tags.slice(0, 4)" :key="t" class="text-[10px] px-1.5 py-0.5 rounded bg-bg-soft/60 text-text-faint border border-border/40">{{ t }}</span>
-        </div>
-        <div class="flex items-center justify-between pt-2 border-t border-border/40">
+        <div class="flex items-center justify-between pt-2 mt-1 border-t border-border/40">
           <span class="bg-gradient-to-r from-brand-400 to-accent-400 bg-clip-text text-transparent font-bold tabular-nums">★ {{ d.rating_avg.toFixed(2) }}</span>
           <span class="text-xs text-text-muted tabular-nums">{{ fmt(d.play_count) }} 次</span>
         </div>
