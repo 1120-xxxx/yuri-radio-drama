@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import {
   getRatingForDrama,
   submitRating,
@@ -7,6 +7,7 @@ import {
   type RatingComment,
   type RatingSummary,
 } from '../lib/ratings';
+import { getBrowserClient } from '../lib/supabase';
 
 const props = defineProps<{
   dramaId: string;
@@ -37,6 +38,25 @@ async function refresh() {
   alreadyRated.value = hasLocallyRated(props.dramaId);
 }
 
+// 乐观更新：提交成功后立即在前端更新 UI，不等服务器返回
+function optimisticUpdate(submittedScore: number, submittedComment: string) {
+  const newComment: RatingComment = {
+    id: 'local_' + Date.now(),
+    score: submittedScore,
+    comment: submittedComment,
+    created_at: new Date().toISOString(),
+  };
+  // 评论列表：新评论插入到最前面
+  comments.value = [newComment, ...comments.value];
+  // 重新计算均分
+  const totalCount = summary.value.count + 1;
+  const totalScore = summary.value.avg * summary.value.count + submittedScore;
+  summary.value = {
+    avg: totalScore / totalCount,
+    count: totalCount,
+  };
+}
+
 async function handleSubmit() {
   if (submitting.value) return;
   if (alreadyRated.value) { message.value = '您已评分过该剧集'; return; }
@@ -51,16 +71,52 @@ async function handleSubmit() {
     });
     message.value = res.message;
     if (res.ok) {
+      // 乐观更新：立即在 UI 显示新评分和评论
+      optimisticUpdate(score.value, comment.value.trim());
       comment.value = '';
       alreadyRated.value = true;
-      await refresh();
+      // 延迟刷新：等待数据库触发器完成后再同步服务器数据
+      setTimeout(refresh, 800);
     }
   } finally {
     submitting.value = false;
   }
 }
 
-onMounted(refresh);
+// Supabase Realtime：订阅本剧集评分变更，其他用户评分也能实时更新
+let channel: any = null;
+function subscribeRealtime() {
+  const sb = getBrowserClient();
+  if (!sb) return;
+  channel = sb
+    .channel(`drama_${props.dramaId}_ratings`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'ratings',
+        filter: `drama_id=eq.${props.dramaId}`,
+      },
+      () => {
+        // 有新评分插入时，延迟刷新（等触发器更新 dramas 表）
+        setTimeout(refresh, 500);
+      }
+    )
+    .subscribe();
+}
+
+onMounted(() => {
+  refresh();
+  subscribeRealtime();
+});
+
+onUnmounted(() => {
+  if (channel) {
+    const sb = getBrowserClient();
+    sb?.removeChannel(channel);
+  }
+});
 </script>
 
 <template>
