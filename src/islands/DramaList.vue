@@ -49,7 +49,7 @@ const filtered = computed(() => {
     const matchKw = !kw || d.title.toLowerCase().includes(kw) || d.platform.toLowerCase().includes(kw);
     const matchP = selectedPlatforms.value.length === 0 || selectedPlatforms.value.includes(d.platform);
     const matchY = selectedYears.value.length === 0 || selectedYears.value.includes(String(d.year));
-    const matchT = selectedTags.value.length === 0 || (d.tags && selectedTags.value.some((t) => d.tags!.includes(t)));
+    const matchT = selectedTags.value.length === 0 || (d.tags && selectedTags.value.every((t) => d.tags!.includes(t)));
     return matchKw && matchP && matchY && matchT;
   });
   list = list.slice().sort((a, b) => sort.value === 'play' ? b.play_count - a.play_count : b.rating_avg - a.rating_avg);

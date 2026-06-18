@@ -19,9 +19,9 @@ const byAuthor = (await getRankings('author_adaptation')).slice(0, 20);
 
   <RankSwitcher
     client:load
-    :byPlay={byPlay}
-    :byRating={byRating}
-    :byCv={byCv}
-    :byAuthor={byAuthor}
+    byPlay={byPlay}
+    byRating={byRating}
+    byCv={byCv}
+    byAuthor={byAuthor}
   />
 </BaseLayout>
