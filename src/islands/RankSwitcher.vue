@@ -130,7 +130,7 @@ function rankBadge(idx: number): string {
             <div class="text-xs text-text-faint mt-0.5">CV</div>
           </div>
           <div class="text-right flex-shrink-0">
-            <div class="font-bold tabular-nums text-cyanx-300">{{ item.display }}</div>
+            <div class="font-bold tabular-nums bg-gradient-to-r from-brand-300 to-accent-300 bg-clip-text text-transparent">{{ item.display }}</div>
             <div class="text-[10px] text-text-faint mt-0.5">参演数</div>
           </div>
         </a>
@@ -163,15 +163,16 @@ function rankBadge(idx: number): string {
 
     <p v-else class="text-sm text-text-muted mt-4">暂无数据。</p>
 
-    <!-- 作者作品弹窗：fixed 定位相对视口居中 -->
-    <div v-if="modalAuthor" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" @click.self="closeAuthorWorks">
-      <div class="bg-bg-card border border-border rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col">
-        <div class="flex items-center justify-between p-5 border-b border-border">
-          <div>
+    <!-- 作者作品弹窗：fixed 定位相对视口居中（与 CV 宇宙弹窗位置逻辑一致） -->
+    <div v-if="modalAuthor" class="fixed inset-0 z-50 flex items-center justify-center p-4" @click.self="closeAuthorWorks">
+      <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="closeAuthorWorks"></div>
+      <div class="relative bg-bg-card border border-border rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden">
+        <div class="flex items-center justify-between p-5 border-b border-border flex-shrink-0">
+          <div class="min-w-0 pr-8">
             <h3 class="text-xl font-bold text-text">{{ modalAuthor.title }}</h3>
             <p class="text-sm text-text-muted mt-1">原作作者 · 共 {{ modalAuthor.works?.length ?? 0 }} 部改编作品</p>
           </div>
-          <button @click="closeAuthorWorks" class="p-2 rounded-lg hover:bg-bg-darker text-text-muted hover:text-text transition-colors" aria-label="关闭">
+          <button @click="closeAuthorWorks" class="flex-shrink-0 p-2 -mr-1 -mt-1 rounded-lg hover:bg-bg-darker text-text-muted hover:text-text transition-colors" aria-label="关闭">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
