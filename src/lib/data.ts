@@ -151,6 +151,8 @@ export interface RankingItem {
   platform?: string;
   value: number;
   display: string;
+  // 作者榜扩展：该作者的全部作品
+  works?: { id: string; title: string; platform?: string; play_count?: number; year?: number }[];
 }
 
 async function getAllRoles(): Promise<DramaCvRole[]> {
@@ -196,26 +198,28 @@ export async function getRankings(metric: RankingMetric): Promise<RankingItem[]>
   if (metric === 'author_adaptation') {
     // 作者改编榜：按原作作者分组，统计其作品被改编为广播剧的数量
     // id 设为该作者播放量最高的剧集id，点击可跳转到该剧详情
-    const authorMap = new Map<string, { count: number; totalPlay: number; topDramaId: string; topDramaPlay: number }>();
+    // works 字段包含该作者的全部作品，用于弹窗展示
+    const authorMap = new Map<string, { count: number; totalPlay: number; works: { id: string; title: string; platform?: string; play_count?: number; year?: number }[] }>();
     for (const d of dramas) {
       const author = d.original_work?.trim();
       if (!author) continue;
-      const existing = authorMap.get(author) ?? { count: 0, totalPlay: 0, topDramaId: d.id, topDramaPlay: 0 };
+      const existing = authorMap.get(author) ?? { count: 0, totalPlay: 0, works: [] };
       existing.count += 1;
       existing.totalPlay += d.play_count ?? 0;
-      if ((d.play_count ?? 0) > existing.topDramaPlay) {
-        existing.topDramaPlay = d.play_count ?? 0;
-        existing.topDramaId = d.id;
-      }
+      existing.works.push({ id: d.id, title: d.title, platform: d.platform, play_count: d.play_count, year: d.year });
       authorMap.set(author, existing);
     }
     return Array.from(authorMap.entries())
-      .map(([author, { count, topDramaId }]) => ({
-        id: topDramaId,
-        title: author,
-        value: count,
-        display: `${count} 部`,
-      }))
+      .map(([author, { count, works }]) => {
+        works.sort((a, b) => (b.play_count ?? 0) - (a.play_count ?? 0));
+        return {
+          id: works[0]?.id ?? author,
+          title: author,
+          value: count,
+          display: `${count} 部`,
+          works,
+        };
+      })
       .sort((a, b) => b.value - a.value);
   }
   return dramas

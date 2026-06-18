@@ -113,9 +113,9 @@ export async function submitRating(payload: SubmitRatingPayload): Promise<{
   }
   const sb = getBrowserClient();
   if (!sb) {
-    // Demo fallback — just remember locally
+    // 未配置 Supabase：仅本地记录，不显示演示模式提示
     markLocallyRated(payload.dramaId, payload.score);
-    return { ok: true, message: '本地演示模式：已记录评分' };
+    return { ok: true, message: '感谢您的评分！' };
   }
   const { error } = await sb.from('ratings').insert([{
     drama_id: payload.dramaId,

@@ -25,7 +25,6 @@ const results = computed(() => {
 
 <template>
   <div class="card">
-    <h2 class="section-title mb-4">搜索 CV</h2>
     <div class="relative">
       <input
         v-model="query"

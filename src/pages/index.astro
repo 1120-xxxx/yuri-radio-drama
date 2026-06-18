@@ -18,7 +18,7 @@ const topCv = (await getRankings('cv_main_roles')).slice(0, 10);
       <h1 class="text-3xl md:text-4xl font-bold mb-3">
         <span class="bg-gradient-to-r from-brand-300 via-accent-300 to-cyanx-400 bg-clip-text text-transparent">百合广播剧</span>
       </h1>
-      <p class="text-text-muted max-w-2xl leading-relaxed">聚合各平台百合广播剧元数据、CV 信息与榜单，支持游客匿名评分评论，数据每周自动更新。</p>
+      <p class="text-text-muted max-w-2xl leading-relaxed">聚合各平台百合广播剧、CV 信息，支持匿名评分评论，数据每周自动更新。</p>
     </div>
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-8">
       <Stat label="剧集数量" value={stats.dramaCount} hint="已收录的剧集" color="brand" />
