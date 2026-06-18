@@ -154,7 +154,7 @@ function rankBadge(idx: number): string {
             <div class="text-xs text-text-faint mt-0.5">原作作者</div>
           </div>
           <div class="text-right flex-shrink-0">
-            <div class="font-bold tabular-nums bg-gradient-to-r from-emerald-300 to-cyanx-300 bg-clip-text text-transparent">{{ item.display }}</div>
+            <div class="font-bold tabular-nums bg-gradient-to-r from-brand-300 to-accent-300 bg-clip-text text-transparent">{{ item.display }}</div>
             <div class="text-[10px] text-text-faint mt-0.5">改编数</div>
           </div>
         </button>
