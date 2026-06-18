@@ -45,9 +45,10 @@ except ImportError:
                     os.environ[_k] = _v
 ALIASES_FILE = ROOT / "scripts" / "aliases.json"
 
-REQUEST_DELAY = 0.5  # 爬取请求间隔（秒）- 降低以提升速度（并发场景下已有限流）
-MAX_WORKERS = 3  # 并发线程数（用于详情/分页并发获取，降低以避免饭角API限流）
-MAX_RETRIES = 3  # HTTP请求最大重试次数
+REQUEST_DELAY = 1.5  # 爬取请求间隔（秒）- 饭角API限流严格，需保持足够间隔
+MAX_WORKERS = 2  # 并发线程数 - 降低并发避免触发饭角限流(code=62601)
+MAX_RETRIES = 8  # HTTP请求最大重试次数 - 增加重试以应对限流
+FANJIAO_PAGE_DELAY = 3.0  # 饭角排行榜翻页间隔（秒）- 翻页请求更温和
 _verbose = False  # 全局 verbose 标志
 
 # 全局 Session（连接池复用，减少 TCP 握手开销，提升并发性能）
@@ -766,19 +767,19 @@ FANJIAO_HEADERS = {
 
 
 def _fanjiao_sign(params: dict) -> str:
-    """饭角API签名: MD5("k1=v1&k2=v2&..." + SECRET)
-    注意：饭角前端JS按对象遍历顺序拼接，不排序。
-    但Python dict在3.7+保持插入顺序，且API服务端通常按排序校验。
-    这里保持排序以确保一致性（服务端校验时会对参数排序）。
+    """饭角API签名: MD5(sorted("k=v").join("&") + SECRET)
+    API 服务端会对参数排序后校验签名，因此客户端必须对参数排序后签名。
     """
     pairs = [f"{k}={v}" for k, v in params.items()]
-    pairs.sort()  # 服务端校验时排序
+    pairs.sort()
     raw = "&".join(pairs) + FANJIAO_SECRET
     return _hashlib.md5(raw.encode()).hexdigest()
 
 
 def _fanjiao_get(path: str, params: dict, max_retries: int = 6) -> dict:
-    """调用饭角API（带重试，包括业务错误 code=62601 服务忙）"""
+    """调用饭角API（带重试，包括业务错误 code=62601 服务忙）
+    退避策略：指数退避 3s → 6s → 12s → 24s → 48s → 96s
+    """
     sig = _fanjiao_sign(params)
     url = f"{FANJIAO_BASE}{path}"
     headers = {**FANJIAO_HEADERS, "signature": sig}
@@ -787,8 +788,8 @@ def _fanjiao_get(path: str, params: dict, max_retries: int = 6) -> dict:
         data = resp.json()
         # code=62601 表示"服务忙"，需要等待后重试
         if data.get("code") == 62601 and attempt < max_retries - 1:
-            wait = 2.0 * (attempt + 1)  # 2, 4, 6, 8, 10 秒
-            log.debug("饭角API服务忙(第%d次)，%.1fs后重试: %s", attempt + 1, wait, path)
+            wait = 3.0 * (2 ** attempt)  # 指数退避: 3, 6, 12, 24, 48...
+            log.warning("饭角API服务忙(第%d次)，%.1fs后重试: %s", attempt + 1, wait, path)
             time.sleep(wait)
             # 重新签名（参数可能需要时间戳变化）
             sig = _fanjiao_sign(params)
@@ -1138,7 +1139,7 @@ def fetch_fanjiao_dramas(result: CrawlResult | None = None) -> Iterable[Drama]:
         for page in range(1, 10):  # 最多抓取9页
             try:
                 result_data = _fanjiao_get("/walkman/api/ranking/album", {
-                    "tab": tab, "time_type": 4, "page": page, "size": 100,
+                    "tab": tab, "time_type": 4, "page": page, "size": 50,
                 })
                 if result_data.get("code") != 0 or not result_data.get("data"):
                     log.info("饭角排行榜 tab=%d page=%d: 无数据，停止该tab", tab, page)
@@ -1159,7 +1160,7 @@ def fetch_fanjiao_dramas(result: CrawlResult | None = None) -> Iterable[Drama]:
                     all_albums.append(album)
                     new_count += 1
                 log.info("饭角排行榜 tab=%d page=%d: %d 条（新增 %d）", tab, page, len(albums), new_count)
-                time.sleep(REQUEST_DELAY)
+                time.sleep(FANJIAO_PAGE_DELAY)
             except Exception as e:
                 log.warning("饭角排行榜 tab=%d page=%d 失败: %s", tab, page, e)
                 break
@@ -1250,8 +1251,12 @@ def fetch_fanjiao_dramas(result: CrawlResult | None = None) -> Iterable[Drama]:
 
     completed = 0
     total = len(all_albums)
+    # 逐个提交任务并加入间隔，避免瞬间发出大量请求触发限流
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(_process_album, a): a for a in all_albums}
+        futures = {}
+        for album in all_albums:
+            futures[executor.submit(_process_album, album)] = album
+            time.sleep(REQUEST_DELAY)  # 提交间隔，平滑请求分布
         for future in as_completed(futures):
             completed += 1
             try:
