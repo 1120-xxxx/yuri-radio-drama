@@ -45,8 +45,8 @@ except ImportError:
                     os.environ[_k] = _v
 ALIASES_FILE = ROOT / "scripts" / "aliases.json"
 
-REQUEST_DELAY = 0.3  # 爬取请求间隔（秒）- 降低以提升速度（并发场景下已有限流）
-MAX_WORKERS = 8  # 并发线程数（用于详情/分页并发获取，提升饭角专辑详情获取速度）
+REQUEST_DELAY = 0.5  # 爬取请求间隔（秒）- 降低以提升速度（并发场景下已有限流）
+MAX_WORKERS = 3  # 并发线程数（用于详情/分页并发获取，降低以避免饭角API限流）
 MAX_RETRIES = 3  # HTTP请求最大重试次数
 _verbose = False  # 全局 verbose 标志
 
@@ -766,16 +766,18 @@ FANJIAO_HEADERS = {
 
 
 def _fanjiao_sign(params: dict) -> str:
-    """饭角API签名: MD5(sorted("k=v").join("&") + SECRET)
-    API 服务端会对参数排序后校验签名，因此客户端必须对参数排序后签名。
+    """饭角API签名: MD5("k1=v1&k2=v2&..." + SECRET)
+    注意：饭角前端JS按对象遍历顺序拼接，不排序。
+    但Python dict在3.7+保持插入顺序，且API服务端通常按排序校验。
+    这里保持排序以确保一致性（服务端校验时会对参数排序）。
     """
     pairs = [f"{k}={v}" for k, v in params.items()]
-    pairs.sort()
+    pairs.sort()  # 服务端校验时排序
     raw = "&".join(pairs) + FANJIAO_SECRET
     return _hashlib.md5(raw.encode()).hexdigest()
 
 
-def _fanjiao_get(path: str, params: dict, max_retries: int = 3) -> dict:
+def _fanjiao_get(path: str, params: dict, max_retries: int = 6) -> dict:
     """调用饭角API（带重试，包括业务错误 code=62601 服务忙）"""
     sig = _fanjiao_sign(params)
     url = f"{FANJIAO_BASE}{path}"
@@ -785,7 +787,7 @@ def _fanjiao_get(path: str, params: dict, max_retries: int = 3) -> dict:
         data = resp.json()
         # code=62601 表示"服务忙"，需要等待后重试
         if data.get("code") == 62601 and attempt < max_retries - 1:
-            wait = 1.0 * (attempt + 1)
+            wait = 2.0 * (attempt + 1)  # 2, 4, 6, 8, 10 秒
             log.debug("饭角API服务忙(第%d次)，%.1fs后重试: %s", attempt + 1, wait, path)
             time.sleep(wait)
             # 重新签名（参数可能需要时间戳变化）
