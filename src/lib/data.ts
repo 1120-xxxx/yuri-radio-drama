@@ -24,7 +24,8 @@ function logFallback(msg: string) {
 export async function getAllDramas(): Promise<Drama[]> {
   // 优先使用本地 JSON（爬虫导出的最新数据）
   if (HAS_LOCAL_DATA) {
-    return latestData.dramas as unknown as Drama[];
+    const dramas = latestData.dramas;
+    return Array.isArray(dramas) ? (dramas as unknown as Drama[]) : [];
   }
   if (USE_SUPABASE) {
     try {
@@ -35,7 +36,7 @@ export async function getAllDramas(): Promise<Drama[]> {
         .select('*')
         .order('play_count', { ascending: false });
       if (error) throw error;
-      return (data as Drama[]) ?? [];
+      return Array.isArray(data) ? (data as Drama[]) : [];
     } catch (err) {
       logFallback(String(err));
     }
@@ -50,7 +51,8 @@ export async function getDramaById(id: string): Promise<Drama | undefined> {
 
 export async function getAllCvs(): Promise<Cv[]> {
   if (HAS_LOCAL_DATA) {
-    return latestData.cvs as Cv[];
+    const cvs = latestData.cvs;
+    return Array.isArray(cvs) ? (cvs as Cv[]) : [];
   }
   if (USE_SUPABASE) {
     try {
@@ -58,7 +60,7 @@ export async function getAllCvs(): Promise<Cv[]> {
       const client = sb.getBuildClient();
       const { data, error } = await client.from('cvs').select('*').order('name');
       if (error) throw error;
-      return (data as Cv[]) ?? [];
+      return Array.isArray(data) ? (data as Cv[]) : [];
     } catch (err) {
       logFallback(String(err));
     }
@@ -153,15 +155,16 @@ export interface RankingItem {
 
 async function getAllRoles(): Promise<DramaCvRole[]> {
   if (HAS_LOCAL_DATA) {
-    return latestData.drama_cv_roles as DramaCvRole[];
+    const roles = latestData.drama_cv_roles;
+    return Array.isArray(roles) ? (roles as DramaCvRole[]) : [];
   }
   if (USE_SUPABASE) {
     try {
       const sb = await import('./supabase');
       const client = sb.getBuildClient();
-      const { data, error } = await client.from('drama_cv_roles').select('drama_id, cv_id');
+      const { data, error } = await client.from('drama_cv_roles').select('drama_id, cv_id, role_type, character_name');
       if (error) throw error;
-      return (data as DramaCvRole[]) ?? [];
+      return Array.isArray(data) ? (data as DramaCvRole[]) : [];
     } catch (err) {
       logFallback(String(err));
     }
