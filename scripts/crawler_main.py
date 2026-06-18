@@ -1574,7 +1574,7 @@ def export_json(cr: CrawlResult, review_mode: bool = False) -> Path:
             {"id": c.id, "name": c.name, "avatar_url": c.avatar_url, "bio": c.bio}
             for c in cr.cvs
         ],
-        "roles": [
+        "drama_cv_roles": [
             {
                 "drama_id": r.drama_id,
                 "cv_id": r.cv_id,
@@ -1613,7 +1613,7 @@ def review_pending_data() -> bool:
 
     dramas = data.get("dramas", [])
     cvs = data.get("cvs", [])
-    roles = data.get("roles", []) or data.get("drama_cv_roles", [])
+    roles = data.get("drama_cv_roles", []) or data.get("roles", [])
 
     log.info("=== 数据审核开始 ===")
     log.info("待审核数据: dramas=%d, cvs=%d, roles=%d", len(dramas), len(cvs), len(roles))
@@ -1720,7 +1720,7 @@ def main() -> int:
             cr_apply = CrawlResult()
             cr_apply.dramas = [Drama(**d) for d in data.get("dramas", [])]
             cr_apply.cvs = [Cv(**c) for c in data.get("cvs", [])]
-            roles_data = data.get("roles", []) or data.get("drama_cv_roles", [])
+            roles_data = data.get("drama_cv_roles", []) or data.get("roles", [])
             cr_apply.roles = [Role(**r) for r in roles_data]
 
             client = SupabaseREST(url, service_key)
