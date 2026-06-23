@@ -1,14 +1,14 @@
 ---
 const { label, value, hint, color = 'brand' } = Astro.props;
 const colors = {
-  brand: 'from-brand-400 to-accent-400',
-  gold: 'from-gold-400 to-brand-400',
-  cyan: 'from-cyanx-400 to-accent-400',
-  accent: 'from-accent-400 to-brand-400',
+  brand: 'from-accent to-accent-end',
+  gold: 'from-gold to-accent',
+  cyan: 'from-cyan to-accent-end',
+  accent: 'from-accent-end to-accent',
 };
 ---
 
-<div class="card hover:border-brand-500/40 transition-all">
+<div class="card hover:border-accent/40 transition-all">
   <div class="text-xs text-text-muted mb-2 uppercase tracking-wide">{label}</div>
   <div class={`text-3xl font-bold bg-gradient-to-r ${colors[color]} bg-clip-text text-transparent tabular-nums`}>{value}</div>
   {hint && <div class="text-xs text-text-faint mt-2">{hint}</div>}

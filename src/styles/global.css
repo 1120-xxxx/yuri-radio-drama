@@ -1,25 +1,29 @@
 :root {
-  --color-bg: #F0F7FF;
-  --color-bg-soft: #E6F2FF;
+  --color-bg: #D9E7F2;
+  --color-bg-soft: #E8F1F8;
   --color-bg-card: #FFFFFF;
-  --color-bg-darker: #DCEBFF;
-  --color-text: #615D6C;
-  --color-text-soft: #4A4658;
-  --color-text-muted: #6F8AB7;
-  --color-text-faint: #9BAECF;
-  --color-border: #89BBFE;
-  --color-border-soft: #ACEDFF;
-  --color-brand: #5D9FFF;
-  --color-brand-soft: #6BBBFF;
-  --color-accent: #6BBBFF;
-  --color-accent-soft: #89BBFE;
+  --color-bg-darker: #C5D7E8;
+  --color-bg-nav: #1F2A38;
+  --color-text: #1F2A38;
+  --color-text-soft: #5A6C7D;
+  --color-text-muted: #8FA4B8;
+  --color-text-faint: #B8C8D8;
+  --color-text-nav: #D9E7F2;
+  --color-border: #C5D7E8;
+  --color-border-soft: #DCE7F2;
+  --color-brand: #74A7D8;
+  --color-brand-soft: #8FA4D8;
+  --color-accent: #83A4D4;
+  --color-accent-end: #B6FBFF;
   --color-gold: #FFC04E;
-  --color-cyan: #5D9FFF;
+  --color-cyan: #74A7D8;
+  --color-success: #67C23A;
+  --color-warning: #E6A23C;
   --radius-sm: 8px;
   --radius-md: 16px;
   --radius-lg: 24px;
-  --shadow-card: 0 8px 32px rgba(93, 159, 255, 0.08);
-  --shadow-brand: 0 8px 24px rgba(93, 159, 255, 0.15);
+  --shadow-card: 0 4px 20px rgba(116, 167, 216, 0.12);
+  --shadow-brand: 0 8px 24px rgba(116, 167, 216, 0.18);
   --container: 1200px;
 }
 
@@ -32,10 +36,7 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100%;
-  background:
-    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(93, 159, 255, 0.10), transparent),
-    radial-gradient(ellipse 60% 50% at 80% 10%, rgba(107, 187, 255, 0.08), transparent),
-    var(--color-bg);
+  background: var(--color-bg);
   color: var(--color-text);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -85,7 +86,7 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--color-brand);
-  box-shadow: 0 0 0 3px rgba(93, 159, 255, 0.18);
+  box-shadow: 0 0 0 3px rgba(116, 167, 216, 0.2);
 }
 
 input::placeholder,
@@ -121,8 +122,8 @@ textarea::placeholder {
 }
 
 ::selection {
-  background: rgba(93, 159, 255, 0.25);
-  color: #fff;
+  background: rgba(116, 167, 216, 0.3);
+  color: var(--color-text);
 }
 
 ::-webkit-scrollbar {

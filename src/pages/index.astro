@@ -16,7 +16,7 @@ const topCv = (await getRankings('cv_main_roles')).slice(0, 10);
   <section class="mb-10">
     <div class="mb-8">
       <h1 class="text-3xl md:text-4xl font-bold mb-3">
-        <span class="bg-gradient-to-r from-brand-300 via-accent-300 to-cyanx-400 bg-clip-text text-transparent">百合广播剧</span>
+        <span class="bg-gradient-to-r from-accent via-accent-end to-cyan bg-clip-text text-transparent">百合广播剧</span>
       </h1>
       <p class="text-text-muted max-w-2xl leading-relaxed">聚合各平台百合广播剧、CV 信息，支持匿名评分评论，数据每周自动更新。</p>
     </div>
@@ -53,7 +53,7 @@ const topCv = (await getRankings('cv_main_roles')).slice(0, 10);
   <section class="card mb-10">
     <div class="flex items-center justify-between mb-4">
       <h2 class="section-title mb-0">CV 参演数 Top 10</h2>
-      <a href="/cv-universe/" class="text-sm text-brand-300 hover:text-brand-200 transition-colors">CV 宇宙 →</a>
+      <a href="/cv-universe/" class="text-sm text-brand hover:text-accent transition-colors">CV 宇宙 →</a>
     </div>
     <TopNBarChart client:visible items={topCv} height={360} variant="cyan" linkPrefix="/cvs/" />
   </section>

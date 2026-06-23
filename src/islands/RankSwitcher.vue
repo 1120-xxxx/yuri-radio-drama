@@ -68,7 +68,7 @@ function rankBadge(idx: number): string {
   if (idx === 0) return 'from-yellow-400 to-amber-500 text-black';
   if (idx === 1) return 'from-slate-300 to-slate-400 text-black';
   if (idx === 2) return 'from-orange-500 to-amber-700 text-white';
-  return 'from-brand-500/30 to-accent-500/30 text-text-soft';
+  return 'from-accent/40 to-accent-end/40 text-text-soft';
 }
 </script>
 
@@ -79,8 +79,8 @@ function rankBadge(idx: number): string {
       <button v-for="t in tabs" :key="t.key" @click="metric = t.key" :class="[
         'px-4 py-2 rounded-xl text-sm font-medium transition-all',
         metric === t.key
-          ? 'bg-gradient-to-r from-brand-500/25 to-accent-500/25 text-brand-200 border border-brand-500/40 shadow-lg shadow-brand-500/10'
-          : 'bg-bg-darker text-text-muted border border-border hover:text-text-soft hover:border-brand-500/30',
+          ? 'bg-gradient-to-r from-accent/30 to-accent-end/30 text-brand border border-accent/40 shadow-lg shadow-accent/10'
+          : 'bg-bg-darker text-text-muted border border-border hover:text-text-soft hover:border-accent/30',
       ]">{{ t.label }}</button>
     </div>
 
@@ -92,7 +92,7 @@ function rankBadge(idx: number): string {
           v-for="(item, idx) in current.items"
           :key="item.id"
           :href="`${current.prefix}${item.id}/`"
-          class="flex items-center gap-4 p-3 rounded-xl border transition-all hover:border-brand-500/40 hover:shadow-lg hover:shadow-brand-500/10 hover:-translate-y-0.5 group"
+          class="flex items-center gap-4 p-3 rounded-xl border transition-all hover:border-accent/40 hover:shadow-lg hover:shadow-accent/10 hover:-translate-y-0.5 group"
           :class="rankClass(idx)"
         >
           <div class="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm bg-gradient-to-br"
@@ -100,13 +100,13 @@ function rankBadge(idx: number): string {
             {{ idx + 1 }}
           </div>
           <div class="flex-1 min-w-0">
-            <div class="font-semibold text-text truncate group-hover:text-brand-300 transition-colors">{{ item.title }}</div>
+            <div class="font-semibold text-text truncate group-hover:text-brand transition-colors">{{ item.title }}</div>
             <div class="text-xs text-text-muted mt-0.5">
               <span v-if="item.platform" class="px-1.5 py-0.5 rounded bg-bg-soft/60 border border-border/40">{{ item.platform }}</span>
             </div>
           </div>
           <div class="text-right flex-shrink-0">
-            <div class="font-bold tabular-nums bg-gradient-to-r from-brand-300 to-accent-300 bg-clip-text text-transparent">{{ item.display }}</div>
+            <div class="font-bold tabular-nums bg-gradient-to-r from-accent to-accent-end bg-clip-text text-transparent">{{ item.display }}</div>
             <div class="text-[10px] text-text-faint mt-0.5">{{ metric === 'play' ? '播放量' : '评分' }}</div>
           </div>
         </a>
@@ -118,7 +118,7 @@ function rankBadge(idx: number): string {
           v-for="(item, idx) in current.items"
           :key="item.id"
           :href="`${current.prefix}${item.id}/`"
-          class="flex items-center gap-4 p-3 rounded-xl border transition-all hover:border-brand-500/40 hover:shadow-lg hover:shadow-brand-500/10 hover:-translate-y-0.5 group"
+          class="flex items-center gap-4 p-3 rounded-xl border transition-all hover:border-accent/40 hover:shadow-lg hover:shadow-accent/10 hover:-translate-y-0.5 group"
           :class="rankClass(idx)"
         >
           <div class="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm bg-gradient-to-br"
@@ -126,11 +126,11 @@ function rankBadge(idx: number): string {
             {{ idx + 1 }}
           </div>
           <div class="flex-1 min-w-0">
-            <div class="font-semibold text-text truncate group-hover:text-brand-300 transition-colors">{{ item.title }}</div>
+            <div class="font-semibold text-text truncate group-hover:text-brand transition-colors">{{ item.title }}</div>
             <div class="text-xs text-text-faint mt-0.5">CV</div>
           </div>
           <div class="text-right flex-shrink-0">
-            <div class="font-bold tabular-nums bg-gradient-to-r from-brand-300 to-accent-300 bg-clip-text text-transparent">{{ item.display }}</div>
+            <div class="font-bold tabular-nums bg-gradient-to-r from-accent to-accent-end bg-clip-text text-transparent">{{ item.display }}</div>
             <div class="text-[10px] text-text-faint mt-0.5">参演数</div>
           </div>
         </a>
@@ -142,7 +142,7 @@ function rankBadge(idx: number): string {
           v-for="(item, idx) in current.items"
           :key="item.id"
           @click="openAuthorWorks(item)"
-          class="w-full flex items-center gap-4 p-3 rounded-xl border transition-all hover:border-brand-500/40 hover:shadow-lg hover:shadow-brand-500/10 hover:-translate-y-0.5 group text-left"
+          class="w-full flex items-center gap-4 p-3 rounded-xl border transition-all hover:border-accent/40 hover:shadow-lg hover:shadow-accent/10 hover:-translate-y-0.5 group text-left"
           :class="rankClass(idx)"
         >
           <div class="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm bg-gradient-to-br"
@@ -150,11 +150,11 @@ function rankBadge(idx: number): string {
             {{ idx + 1 }}
           </div>
           <div class="flex-1 min-w-0">
-            <div class="font-semibold text-text truncate group-hover:text-brand-300 transition-colors">{{ item.title }}</div>
+            <div class="font-semibold text-text truncate group-hover:text-brand transition-colors">{{ item.title }}</div>
             <div class="text-xs text-text-faint mt-0.5">原作作者</div>
           </div>
           <div class="text-right flex-shrink-0">
-            <div class="font-bold tabular-nums bg-gradient-to-r from-brand-300 to-accent-300 bg-clip-text text-transparent">{{ item.display }}</div>
+            <div class="font-bold tabular-nums bg-gradient-to-r from-accent to-accent-end bg-clip-text text-transparent">{{ item.display }}</div>
             <div class="text-[10px] text-text-faint mt-0.5">改编数</div>
           </div>
         </button>
