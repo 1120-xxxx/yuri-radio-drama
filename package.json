@@ -7,11 +7,14 @@
     "dev": "astro dev",
     "start": "astro dev",
     "build": "astro build",
-    "preview": "astro preview",
+    "preview": "npm run build && wrangler dev",
     "astro": "astro",
-    "typecheck": "astro check"
+    "typecheck": "astro check",
+    "deploy": "npm run build && wrangler deploy",
+    "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@astrojs/cloudflare": "11",
     "@astrojs/vercel": "^7.8.2",
     "@astrojs/vue": "^4.5.0",
     "@supabase/supabase-js": "^2.45.4",
@@ -29,6 +32,7 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.3",
     "@types/node": "^22.5.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "wrangler": "^4.102.0"
   }
 }
